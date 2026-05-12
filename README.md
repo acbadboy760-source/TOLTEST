@@ -76,3 +76,15 @@ After completion, an `attack_report.txt` file will be automatically saved in the
 ## 📜 License & Security Policy
 - **[MIT License](LICENSE)** – You are free to use it for any legal purpose, but the original disclaimer must be kept.
 - **[Security Policy](SECURITY.md)** – Please read before use. Abuse will not be tolerated.
+---
+
+## 💡 Issues & Feature Requests
+
+Found a bug? Have an idea for a new attack vector or feature?
+
+- 🐞 **Report a Bug**: [Open an Issue](../../issues/new?template=bug_report.md)
+- 💎 **Request a Feature**: [Open an Issue](../../issues/new?template=feature_request.md)
+- 🛠️ **Contribute**: Fork the repo, make your changes, and submit a Pull Request.
+
+All contributions, feedback, and discussions are welcome!  
+Please read our [Security Policy](SECURITY.md) before submitting anything sensitive.
