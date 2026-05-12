@@ -1,3 +1,4 @@
+```markdown
 # 🛡️ Ultimate DDoS Simulation Toolkit (God Mode)
 
 **⚠️ IMPORTANT LEGAL NOTICE**
@@ -62,3 +63,24 @@ After completion, an `attack_report.txt` file will be automatically saved in the
 ---
 
 ## 📊 Understanding the Live Dashboard
+```
+
+🔥 LIVE ATTACK STATS
+📤 Total Sent: 125,430
+✅ Success: 98.7%
+❌ Failed: 1.3%
+⚡ Avg. RPS: 3,200
+⏱️ Elapsed: 38.2s
+
+```
+- **Success Rate** shows how many requests got a valid response from the target.
+- **RPS** (Requests Per Second) measures the raw power of the attack.
+
+---
+
+## 📜 License & Security Policy
+- **[MIT License](LICENSE)** – You are free to use it for any legal purpose, but the original disclaimer must be kept.
+- **[Security Policy](SECURITY.md)** – Please read before use. Abuse will not be tolerated.
+```
+
+---
