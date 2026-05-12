@@ -114,5 +114,27 @@
         "service": "https"
       }
     ]
+  },
+  "104.16.230.132": {
+    "host": "requirements-reading-strategies-acquisition.trycloudflare.com",
+    "timestamp": "2026-05-12T17:09:30.261130",
+    "ports": [
+      {
+        "port": 443,
+        "service": "https"
+      },
+      {
+        "port": 80,
+        "service": "http"
+      },
+      {
+        "port": 8080,
+        "service": "http"
+      },
+      {
+        "port": 8443,
+        "service": "https"
+      }
+    ]
   }
 }
