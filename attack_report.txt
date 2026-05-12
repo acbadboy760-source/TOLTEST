@@ -1,0 +1,12 @@
+📊 گزارش حمله DDoS
+========================
+🎯 هدف: fps.ms (IP: 172.67.141.111)
+🔌 پورت‌های هدف: [{'port': 80, 'service': 'http'}, {'port': 443, 'service': 'https'}, {'port': 2052, 'service': 'http'}, {'port': 2053, 'service': 'http'}, {'port': 2082, 'service': 'http'}, {'port': 2083, 'service': 'http'}, {'port': 2086, 'service': 'http'}, {'port': 2087, 'service': 'http'}, {'port': 2095, 'service': 'http'}, {'port': 2096, 'service': 'http'}, {'port': 8080, 'service': 'http'}, {'port': 8443, 'service': 'https-alt'}, {'port': 8880, 'service': 'http'}]
+⚡ نوع حمله: l7_mixed_flood
+⏱️ مدت زمان: 120 ثانیه
+📤 کل بسته‌های ارسالی: 1,587,396
+✅ موفق: 540
+❌ ناموفق: 1,586,856
+🎯 نرخ موفقیت: 0.03%
+⚡ میانگین RPS: 13080
+🕒 زمان پایان: 2026-05-12 15:37:41
