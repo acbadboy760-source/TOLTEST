@@ -1,12 +1,12 @@
 📊 گزارش حمله DDoS
 ========================
-🎯 هدف: fps.ms (IP: 172.67.141.111)
-🔌 پورت‌های هدف: [{'port': 80, 'service': 'http'}, {'port': 443, 'service': 'https'}, {'port': 2052, 'service': 'http'}, {'port': 2053, 'service': 'http'}, {'port': 2082, 'service': 'http'}, {'port': 2083, 'service': 'http'}, {'port': 2086, 'service': 'http'}, {'port': 2087, 'service': 'http'}, {'port': 2095, 'service': 'http'}, {'port': 2096, 'service': 'http'}, {'port': 8080, 'service': 'http'}, {'port': 8443, 'service': 'https-alt'}, {'port': 8880, 'service': 'http'}]
-⚡ نوع حمله: l7_http2_flood
+🎯 هدف: requirements-reading-strategies-acquisition.trycloudflare.com (IP: 104.16.230.132)
+🔌 پورت‌های هدف: [443, 80, 8080, 8443]
+⚡ نوع حمله: l7_mixed_flood
 ⏱️ مدت زمان: 120 ثانیه
-📤 کل بسته‌های ارسالی: 2,459,086
-✅ موفق: 0
-❌ ناموفق: 2,459,086
-🎯 نرخ موفقیت: 0.00%
-⚡ میانگین RPS: 19692
-🕒 زمان پایان: 2026-05-12 16:42:51
+📤 کل بسته‌های ارسالی: 232,437
+✅ موفق: 187,084
+❌ ناموفق: 45,353
+🎯 نرخ موفقیت: 80.49%
+⚡ میانگین RPS: 1923
+🕒 زمان پایان: 2026-05-12 17:11:45
