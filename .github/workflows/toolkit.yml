@@ -1,4 +1,4 @@
-name: Ultimate DDoS Simulation Toolkit
+name: Ultimate DDoS Simulation Toolkit (Cached)
 
 on:
   workflow_dispatch:
@@ -52,11 +52,38 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: نصب ابزارها
+      - name: کش کردن بسته‌های APT
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/toolkit.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
+      - name: کش کردن pip
+        uses: actions/cache@v4
+        with:
+          path: ~/cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: کش کردن نتایج اسکن
+        uses: actions/cache@v4
+        with:
+          path: scan_results
+          key: scan-cache-${{ runner.os }}-${{ hashFiles('scan_results/targets_cache.json') }}
+          restore-keys: |
+            scan-cache-${{ runner.os }}-
+
+      - name: نصب بسته‌های سیستمی
         run: |
           sudo apt-get update
-          sudo apt-get install -y nmap
-          pip3 install aiohttp rich "httpx[http2]" websockets scapy python-nmap
+          sudo apt-get install --no-download -y nmap 2>/dev/null || sudo apt-get install -y nmap
+
+      - name: نصب بسته‌های پایتون
+        run: |
+          pip3 install --cache-dir ~/cache/pip aiohttp rich "httpx[http2]" websockets scapy python-nmap
 
       - name: اجرای حمله
         env:
