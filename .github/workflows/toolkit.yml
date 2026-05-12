@@ -469,19 +469,21 @@ jobs:
           console.print("\n[bold green]✅ عملیات پایان یافت.[/bold green]")
 
           success_rate = (final['success']/(final['sent'] or 1))*100
-          report_content = f"""📊 گزارش حمله DDoS
-========================
-🎯 هدف: {TARGET} (IP: {ip})
-🔌 پورت‌های هدف: {target_ports}
-⚡ نوع حمله: {ATTACK}
-⏱️ مدت زمان: {DURATION} ثانیه
-📤 کل بسته‌های ارسالی: {final['sent']:,}
-✅ موفق: {final['success']:,}
-❌ ناموفق: {final['failed']:,}
-🎯 نرخ موفقیت: {success_rate:.2f}%
-⚡ میانگین RPS: {final['rps']:.0f}
-🕒 زمان پایان: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
+          report_lines = [
+              "📊 گزارش حمله DDoS",
+              "========================",
+              "🎯 هدف: %s (IP: %s)" % (TARGET, ip),
+              "🔌 پورت‌های هدف: %s" % str(target_ports),
+              "⚡ نوع حمله: %s" % ATTACK,
+              "⏱️ مدت زمان: %s ثانیه" % DURATION,
+              "📤 کل بسته‌های ارسالی: %s" % format(final['sent'], ','),
+              "✅ موفق: %s" % format(final['success'], ','),
+              "❌ ناموفق: %s" % format(final['failed'], ','),
+              "🎯 نرخ موفقیت: %.2f%%" % success_rate,
+              "⚡ میانگین RPS: %.0f" % final['rps'],
+              "🕒 زمان پایان: %s" % datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+          ]
+          report_content = "\n".join(report_lines)
           with open(REPORT_FILE, 'w') as f:
               f.write(report_content)
           os.system(f"git add {REPORT_FILE} && git commit -m 'Add attack report' && git push 2>/dev/null || true")
