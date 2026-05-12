@@ -12,5 +12,63 @@
         "service": "https"
       }
     ]
+  },
+  "172.67.141.111": {
+    "host": "fps.ms",
+    "timestamp": "2026-05-12T15:08:43.334520",
+    "ports": [
+      {
+        "port": 80,
+        "service": "http"
+      },
+      {
+        "port": 443,
+        "service": "https"
+      },
+      {
+        "port": 2052,
+        "service": "http"
+      },
+      {
+        "port": 2053,
+        "service": "http"
+      },
+      {
+        "port": 2082,
+        "service": "http"
+      },
+      {
+        "port": 2083,
+        "service": "http"
+      },
+      {
+        "port": 2086,
+        "service": "http"
+      },
+      {
+        "port": 2087,
+        "service": "http"
+      },
+      {
+        "port": 2095,
+        "service": "http"
+      },
+      {
+        "port": 2096,
+        "service": "http"
+      },
+      {
+        "port": 8080,
+        "service": "http"
+      },
+      {
+        "port": 8443,
+        "service": "https-alt"
+      },
+      {
+        "port": 8880,
+        "service": "http"
+      }
+    ]
   }
 }
