@@ -1,0 +1,16 @@
+{
+  "66.254.114.41": {
+    "host": "pornhub.com",
+    "timestamp": "2026-05-12T13:26:33.938622",
+    "ports": [
+      {
+        "port": 80,
+        "service": "http"
+      },
+      {
+        "port": 443,
+        "service": "https"
+      }
+    ]
+  }
+}
